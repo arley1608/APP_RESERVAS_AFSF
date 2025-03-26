@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
+import 'reservation_screen.dart';
 import 'user_management_screen.dart';
 import 'room_management_screen.dart';
 import 'activity_management_screen.dart'; // Importa la nueva pantalla de actividades
@@ -103,7 +104,13 @@ class DashboardScreen extends StatelessWidget {
                 ),
                 SizedBox(height: 40),
                 if (rol == "admin" || rol == "operador")
-                  _buildButton(context, "Nueva Reserva", Icons.add, () {}),
+                  _buildButton(context, "Nueva Reserva", Icons.add, () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => ReservationScreen()),
+                    );
+                  }),
                 if (rol == "admin" || rol == "operador")
                   _buildButton(context, "Editar Reserva", Icons.edit, () {}),
                 if (rol == "admin" || rol == "recepcionista")
