@@ -1,0 +1,1 @@
+ C:\\Users\\rodri\\OneDrive\\Documentos\\DESARROLLO\\app_reservas\\.dart_tool\\flutter_build\\334f6d85274dc8092d98945d30c79f16\\native_assets.yaml: 
