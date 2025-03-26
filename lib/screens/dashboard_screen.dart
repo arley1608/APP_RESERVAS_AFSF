@@ -5,8 +5,8 @@ import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'user_management_screen.dart';
 import 'room_management_screen.dart';
-//import 'activity_management_screen.dart'; // Importa la nueva pantalla de actividades
-//import 'food_management_screen.dart'; // Importa la nueva pantalla de alimentos
+import 'activity_management_screen.dart'; // Importa la nueva pantalla de actividades
+import 'food_management_screen.dart'; // Importa la nueva pantalla de alimentos
 
 class DashboardScreen extends StatelessWidget {
   final String rol;
@@ -130,20 +130,20 @@ class DashboardScreen extends StatelessWidget {
                 if (rol == "admin")
                   _buildButton(
                       context, "Gestión de Actividades", Icons.assignment, () {
-                    // Navigator.push(
-                    // context,
-                    // MaterialPageRoute(
-                    // builder: (context) => ActivityManagementScreen()),
-                    // );
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => ActivityManagementScreen()),
+                    );
                   }),
                 if (rol == "admin")
                   _buildButton(
                       context, "Gestión de Alimentos", Icons.restaurant, () {
-                    // Navigator.push(
-                    //  context,
-                    // MaterialPageRoute(
-                    //   builder: (context) => FoodManagementScreen()),
-                    // );
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => FoodManagementScreen()),
+                    );
                   }),
                 SizedBox(height: 20),
                 Padding(

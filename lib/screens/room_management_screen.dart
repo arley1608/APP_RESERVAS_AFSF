@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:intl/intl.dart';
 import 'dart:io';
 
 class RoomManagementScreen extends StatefulWidget {
@@ -11,17 +9,15 @@ class RoomManagementScreen extends StatefulWidget {
 }
 
 class _RoomManagementScreenState extends State<RoomManagementScreen> {
-  final TextEditingController _nombreController = TextEditingController();
-  final TextEditingController _precioController = TextEditingController();
-  final TextEditingController _capacidadController = TextEditingController();
-  final TextEditingController _descripcionController = TextEditingController();
-
-  String _selectedTipo = "Habitación Superior";
+  final TextEditingController nombreController = TextEditingController();
+  final TextEditingController precioController = TextEditingController();
+  final TextEditingController capacidadController = TextEditingController();
+  final TextEditingController descripcionController = TextEditingController();
+  String selectedTipo = "Habitación Superior";
   File? _image;
-  String? _editingId;
-  bool _isLoading = false;
+  String? editingId;
 
-  final List<String> _roomTypes = [
+  final List<String> roomTypes = [
     "Habitación Superior",
     "Habitación Standard",
     "Cabaña",
@@ -30,8 +26,6 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     "Zona de Camping con Carpa",
     "Hamaca",
   ];
-
-  // --- Funciones Mejoradas ---
 
   Future<void> _pickImage() async {
     final pickedFile =
@@ -43,316 +37,219 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     }
   }
 
-  Future<String> _uploadImage(File image) async {
-    try {
-      setState(() => _isLoading = true);
-      final ref = FirebaseStorage.instance
-          .ref()
-          .child('alojamientos/${DateTime.now().millisecondsSinceEpoch}');
-      await ref.putFile(image);
-      return await ref.getDownloadURL();
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
+  Future<void> guardarAlojamiento() async {
+    String precioTexto = precioController.text.replaceAll(',', '.');
+    double? nuevoPrecio = double.tryParse(precioTexto);
+    int? nuevaCapacidad = int.tryParse(capacidadController.text.trim());
 
-  Future<void> _guardarAlojamiento() async {
-    if (_isLoading) return;
-
-    // Validación de campos
-    final nombre = _nombreController.text.trim();
-    final descripcion = _descripcionController.text.trim();
-    final precio =
-        double.tryParse(_precioController.text.replaceAll(',', '.')) ?? 0;
-    final capacidad = int.tryParse(_capacidadController.text.trim()) ?? 0;
-
-    if (nombre.isEmpty ||
-        descripcion.isEmpty ||
-        precio <= 0 ||
-        capacidad <= 0) {
-      _showDialog(
-          "Error", "Por favor, complete todos los campos correctamente.");
+    if (nuevoPrecio == null ||
+        nuevaCapacidad == null ||
+        nombreController.text.trim().isEmpty ||
+        descripcionController.text.trim().isEmpty) {
+      _showDialog("Error", "Ingrese valores válidos en todos los campos.");
       return;
     }
 
-    try {
-      setState(() => _isLoading = true);
-
-      String? imageUrl;
-      if (_image != null) {
-        imageUrl = await _uploadImage(_image!);
-      } else if (_editingId != null) {
-        // Mantener la imagen existente si no se selecciona una nueva
-        final doc = await FirebaseFirestore.instance
-            .collection('alojamientos')
-            .doc(_editingId)
-            .get();
-        imageUrl = doc['imagen'];
-      }
-
-      final alojamientoData = {
-        'nombre': nombre,
-        'tipo': _selectedTipo,
-        'precio': precio,
-        'capacidad': capacidad,
-        'descripcion': descripcion,
-        'imagen': imageUrl ?? "",
-        'updatedAt': FieldValue.serverTimestamp(),
-      };
-
-      if (_editingId == null) {
-        await FirebaseFirestore.instance
-            .collection('alojamientos')
-            .add(alojamientoData);
-      } else {
-        await FirebaseFirestore.instance
-            .collection('alojamientos')
-            .doc(_editingId)
-            .update(alojamientoData);
-      }
-
-      _showDialog("Éxito", "Alojamiento guardado correctamente.");
-      _clearForm();
-    } catch (e) {
-      _showDialog("Error", "Ocurrió un error: ${e.toString()}");
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _eliminarAlojamiento(String id) async {
-    try {
-      setState(() => _isLoading = true);
+    if (editingId == null) {
+      await FirebaseFirestore.instance.collection('alojamientos').add({
+        'nombre': nombreController.text.trim(),
+        'tipo': selectedTipo,
+        'precio': nuevoPrecio,
+        'capacidad': nuevaCapacidad,
+        'descripcion': descripcionController.text.trim(),
+        'imagen': _image != null ? _image!.path : "",
+      });
+    } else {
       await FirebaseFirestore.instance
           .collection('alojamientos')
-          .doc(id)
-          .delete();
-      _showDialog("Éxito", "Alojamiento eliminado correctamente.");
-    } catch (e) {
-      _showDialog("Error", "No se pudo eliminar: ${e.toString()}");
-    } finally {
-      setState(() => _isLoading = false);
+          .doc(editingId)
+          .update({
+        'nombre': nombreController.text.trim(),
+        'tipo': selectedTipo,
+        'precio': nuevoPrecio,
+        'capacidad': nuevaCapacidad,
+        'descripcion': descripcionController.text.trim(),
+        'imagen': _image != null ? _image!.path : "",
+      });
+      setState(() {
+        editingId = null;
+      });
     }
+
+    _showDialog("Éxito", "Alojamiento guardado correctamente.");
+  }
+
+  Future<void> eliminarAlojamiento(String id) async {
+    await FirebaseFirestore.instance
+        .collection('alojamientos')
+        .doc(id)
+        .delete();
+    _showDialog("Éxito", "Alojamiento eliminado correctamente.");
+  }
+
+  void _showDialog(String title, String message) {
+    IconData icon = title == "Éxito" ? Icons.check_circle : Icons.error;
+    Color iconColor = title == "Éxito" ? Colors.green : Colors.red;
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(icon, color: iconColor, size: 28),
+              SizedBox(width: 10),
+              Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Text(message, style: TextStyle(fontSize: 18)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text("Aceptar"),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _loadAlojamientoForEdit(Map<String, dynamic> data, String id) {
     setState(() {
-      _editingId = id;
-      _nombreController.text = data['nombre'];
-      _selectedTipo = data['tipo'];
-      _precioController.text = data['precio'].toString();
-      _capacidadController.text = data['capacidad'].toString();
-      _descripcionController.text = data['descripcion'];
+      editingId = id;
+      nombreController.text = data['nombre'];
+      selectedTipo = data['tipo'];
+      precioController.text = data['precio'].toString();
+      capacidadController.text = data['capacidad'].toString();
+      descripcionController.text = data['descripcion'];
     });
   }
-
-  void _clearForm() {
-    _nombreController.clear();
-    _precioController.clear();
-    _capacidadController.clear();
-    _descripcionController.clear();
-    setState(() {
-      _image = null;
-      _editingId = null;
-      _selectedTipo = _roomTypes.first;
-    });
-  }
-
-  void _showDialog(String title, String message) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(
-              title == "Éxito" ? Icons.check_circle : Icons.error,
-              color: title == "Éxito" ? Colors.green : Colors.red,
-            ),
-            SizedBox(width: 10),
-            Text(title),
-          ],
-        ),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text("OK"),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- UI Mejorada ---
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text("Gestión de Alojamientos",
-            style: TextStyle(color: Colors.white)),
+            style: TextStyle(
+                fontSize: 28,
+                color: Colors.white,
+                fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+          icon: Icon(Icons.arrow_back_ios_new, size: 35, color: Colors.white),
+          onPressed: () => Navigator.of(context).pop(),
         ),
       ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : Column(
+      body: Column(
+        children: [
+          Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Column(
               children: [
-                Expanded(
-                  flex: 2,
-                  child: SingleChildScrollView(
-                    padding: EdgeInsets.all(16),
-                    child: Column(
-                      children: [
-                        TextField(
-                          controller: _nombreController,
-                          decoration: InputDecoration(labelText: "Nombre"),
-                        ),
-                        DropdownButtonFormField<String>(
-                          value: _selectedTipo,
-                          items: _roomTypes
-                              .map((type) => DropdownMenuItem(
-                                    value: type,
-                                    child: Text(type),
-                                  ))
-                              .toList(),
-                          onChanged: (value) =>
-                              setState(() => _selectedTipo = value!),
-                          decoration: InputDecoration(labelText: "Tipo"),
-                        ),
-                        TextField(
-                          controller: _precioController,
-                          decoration: InputDecoration(labelText: "Precio"),
-                          keyboardType:
-                              TextInputType.numberWithOptions(decimal: true),
-                        ),
-                        TextField(
-                          controller: _capacidadController,
-                          decoration: InputDecoration(labelText: "Capacidad"),
-                          keyboardType: TextInputType.number,
-                        ),
-                        TextField(
-                          controller: _descripcionController,
-                          decoration: InputDecoration(labelText: "Descripción"),
-                          maxLines: 3,
-                        ),
-                        SizedBox(height: 16),
-                        _image != null
-                            ? Image.file(_image!,
-                                height: 150, fit: BoxFit.cover)
-                            : Container(
-                                height: 150,
-                                color: Colors.grey[200],
-                                child: Icon(Icons.image, size: 50),
-                              ),
-                        TextButton.icon(
-                          onPressed: _pickImage,
-                          icon: Icon(Icons.photo_library),
-                          label: Text("Seleccionar imagen"),
-                        ),
-                        SizedBox(height: 16),
-                        ElevatedButton(
-                          onPressed: _guardarAlojamiento,
-                          child: Text(
-                              _editingId == null ? "Guardar" : "Actualizar"),
-                          style: ElevatedButton.styleFrom(
-                            minimumSize: Size(double.infinity, 50),
-                          ),
-                        ),
-                        if (_editingId != null) ...[
-                          SizedBox(height: 8),
-                          OutlinedButton(
-                            onPressed: _clearForm,
-                            child: Text("Cancelar"),
-                            style: OutlinedButton.styleFrom(
-                              minimumSize: Size(double.infinity, 50),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+                TextField(
+                    controller: nombreController,
+                    decoration: InputDecoration(
+                      labelText: "Nombre",
+                      labelStyle: TextStyle(fontSize: 20),
+                    )),
+                DropdownButton<String>(
+                  value: selectedTipo,
+                  onChanged: (value) {
+                    setState(() {
+                      selectedTipo = value!;
+                    });
+                  },
+                  items: roomTypes
+                      .map((type) =>
+                          DropdownMenuItem(value: type, child: Text(type)))
+                      .toList(),
                 ),
-                Divider(height: 1),
-                Expanded(
-                  flex: 3,
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('alojamientos')
-                        .orderBy('updatedAt', descending: true)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) {
-                        return Center(child: CircularProgressIndicator());
-                      }
-                      return ListView.builder(
-                        itemCount: snapshot.data!.docs.length,
-                        itemBuilder: (context, index) {
-                          final doc = snapshot.data!.docs[index];
-                          final data = doc.data() as Map<String, dynamic>;
-                          return Card(
-                            margin: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            child: ListTile(
-                              leading: data['imagen']?.isNotEmpty == true
-                                  ? ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: Image.network(
-                                        data['imagen'],
-                                        width: 50,
-                                        height: 50,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    )
-                                  : Icon(Icons.image_not_supported, size: 50),
-                              title: Text(data['nombre'],
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.bold)),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(data['tipo']),
-                                  Text("Capacidad: ${data['capacidad']}"),
-                                  Text(
-                                      "Precio: ${NumberFormat.currency(locale: 'es').format(data['precio'])}"),
-                                ],
-                              ),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(Icons.edit, color: Colors.blue),
-                                    onPressed: () =>
-                                        _loadAlojamientoForEdit(data, doc.id),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () =>
-                                        _eliminarAlojamiento(doc.id),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
+                TextField(
+                    controller: precioController,
+                    decoration: InputDecoration(
+                        labelText: "Precio",
+                        labelStyle: TextStyle(fontSize: 20)),
+                    keyboardType: TextInputType.number),
+                TextField(
+                    controller: capacidadController,
+                    decoration: InputDecoration(
+                        labelText: "Capacidad",
+                        labelStyle: TextStyle(fontSize: 20)),
+                    keyboardType: TextInputType.number),
+                TextField(
+                    controller: descripcionController,
+                    decoration: InputDecoration(
+                        labelText: "Descripción",
+                        labelStyle: TextStyle(fontSize: 20)),
+                    maxLines: 2),
+                SizedBox(height: 10),
+                _image != null
+                    ? Image.file(_image!, height: 100)
+                    : Container(height: 100, color: Colors.grey[300]),
+                TextButton.icon(
+                  onPressed: _pickImage,
+                  icon: Icon(Icons.image),
+                  label: Text("Seleccionar Nueva Imagen"),
+                ),
+                SizedBox(height: 10),
+                ElevatedButton(
+                  onPressed: guardarAlojamiento,
+                  child: Text("Guardar Alojamiento",
+                      style: TextStyle(fontSize: 18)),
                 ),
               ],
             ),
+          ),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('alojamientos')
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData)
+                  return Center(child: CircularProgressIndicator());
+                return ListView(
+                  children: snapshot.data!.docs.map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    return Card(
+                      margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      child: ListTile(
+                        leading: (data['imagen'] != null &&
+                                data['imagen'].isNotEmpty)
+                            ? Image.network(data['imagen'],
+                                width: 50, height: 50, fit: BoxFit.cover)
+                            : Icon(Icons.image_not_supported,
+                                size: 50, color: Colors.grey),
+                        title: Text("${data['tipo']} - ${data['nombre']}",
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 18)),
+                        subtitle: Text(
+                            "Capacidad: ${data['capacidad']}\nPrecio: \$${data['precio']}\n${data['descripcion']}",
+                            style: TextStyle(fontSize: 16)),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: Icon(Icons.edit, color: Colors.blue),
+                              onPressed: () =>
+                                  _loadAlojamientoForEdit(data, doc.id),
+                            ),
+                            IconButton(
+                              icon: Icon(Icons.delete, color: Colors.red),
+                              onPressed: () => eliminarAlojamiento(doc.id),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
-  }
-
-  @override
-  void dispose() {
-    _nombreController.dispose();
-    _precioController.dispose();
-    _capacidadController.dispose();
-    _descripcionController.dispose();
-    super.dispose();
   }
 }
