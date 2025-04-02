@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 
 class RoomManagementScreen extends StatefulWidget {
   @override
@@ -14,7 +12,6 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
   final TextEditingController capacidadController = TextEditingController();
   final TextEditingController descripcionController = TextEditingController();
   String selectedTipo = "Habitación Superior";
-  File? _image;
   String? editingId;
 
   final List<String> roomTypes = [
@@ -27,69 +24,30 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     "Hamaca",
   ];
 
-  Future<void> _pickImage() async {
-    final pickedFile =
-        await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (pickedFile != null) {
-      setState(() {
-        _image = File(pickedFile.path);
-      });
-    }
+  void _showSuccessDialog(String message) {
+    _showDialog(
+      title: "Éxito",
+      message: message,
+      icon: Icons.check_circle,
+      iconColor: Colors.green,
+    );
   }
 
-  Future<void> guardarAlojamiento() async {
-    String precioTexto = precioController.text.replaceAll(',', '.');
-    double? nuevoPrecio = double.tryParse(precioTexto);
-    int? nuevaCapacidad = int.tryParse(capacidadController.text.trim());
-
-    if (nuevoPrecio == null ||
-        nuevaCapacidad == null ||
-        nombreController.text.trim().isEmpty ||
-        descripcionController.text.trim().isEmpty) {
-      _showDialog("Error", "Ingrese valores válidos en todos los campos.");
-      return;
-    }
-
-    if (editingId == null) {
-      await FirebaseFirestore.instance.collection('alojamientos').add({
-        'nombre': nombreController.text.trim(),
-        'tipo': selectedTipo,
-        'precio': nuevoPrecio,
-        'capacidad': nuevaCapacidad,
-        'descripcion': descripcionController.text.trim(),
-        'imagen': _image != null ? _image!.path : "",
-      });
-    } else {
-      await FirebaseFirestore.instance
-          .collection('alojamientos')
-          .doc(editingId)
-          .update({
-        'nombre': nombreController.text.trim(),
-        'tipo': selectedTipo,
-        'precio': nuevoPrecio,
-        'capacidad': nuevaCapacidad,
-        'descripcion': descripcionController.text.trim(),
-        'imagen': _image != null ? _image!.path : "",
-      });
-      setState(() {
-        editingId = null;
-      });
-    }
-
-    _showDialog("Éxito", "Alojamiento guardado correctamente.");
+  void _showErrorDialog(String message) {
+    _showDialog(
+      title: "Error",
+      message: message,
+      icon: Icons.error,
+      iconColor: Colors.red,
+    );
   }
 
-  Future<void> eliminarAlojamiento(String id) async {
-    await FirebaseFirestore.instance
-        .collection('alojamientos')
-        .doc(id)
-        .delete();
-    _showDialog("Éxito", "Alojamiento eliminado correctamente.");
-  }
-
-  void _showDialog(String title, String message) {
-    IconData icon = title == "Éxito" ? Icons.check_circle : Icons.error;
-    Color iconColor = title == "Éxito" ? Colors.green : Colors.red;
+  void _showDialog({
+    required String title,
+    required String message,
+    required IconData icon,
+    required Color iconColor,
+  }) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -115,6 +73,96 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     );
   }
 
+  Future<void> guardarAlojamiento() async {
+    if (nombreController.text.trim().isEmpty) {
+      _showErrorDialog("El nombre es requerido");
+      return;
+    }
+
+    final precio =
+        double.tryParse(precioController.text.replaceAll(',', '.')) ?? 0;
+    if (precio <= 0) {
+      _showErrorDialog("Ingrese un precio válido mayor a cero");
+      return;
+    }
+
+    final capacidad = int.tryParse(capacidadController.text.trim()) ?? 0;
+    if (capacidad <= 0) {
+      _showErrorDialog("La capacidad debe ser mayor a 0");
+      return;
+    }
+
+    try {
+      final alojamientoData = {
+        'nombre': nombreController.text.trim(),
+        'tipo': selectedTipo,
+        'precio': precio,
+        'capacidad': capacidad,
+        'descripcion': descripcionController.text.trim(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (editingId == null) {
+        alojamientoData['createdAt'] = FieldValue.serverTimestamp();
+        await FirebaseFirestore.instance
+            .collection('alojamientos')
+            .add(alojamientoData);
+        _showSuccessDialog("Alojamiento creado correctamente");
+      } else {
+        await FirebaseFirestore.instance
+            .collection('alojamientos')
+            .doc(editingId)
+            .update(alojamientoData);
+        _showSuccessDialog("Alojamiento actualizado correctamente");
+      }
+
+      _resetForm();
+    } catch (e) {
+      _showErrorDialog("No se pudo guardar el alojamiento: ${e.toString()}");
+    }
+  }
+
+  Future<void> eliminarAlojamiento(String id) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange, size: 28),
+            SizedBox(width: 10),
+            Text("Confirmar eliminación",
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text("¿Estás seguro de eliminar este alojamiento?",
+            style: TextStyle(fontSize: 18)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text("Cancelar"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text("Eliminar", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('alojamientos')
+            .doc(id)
+            .delete();
+        _showSuccessDialog("Alojamiento eliminado correctamente");
+      } catch (e) {
+        _showErrorDialog("No se pudo eliminar: ${e.toString()}");
+      }
+    }
+  }
+
   void _loadAlojamientoForEdit(Map<String, dynamic> data, String id) {
     setState(() {
       editingId = id;
@@ -123,6 +171,17 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
       precioController.text = data['precio'].toString();
       capacidadController.text = data['capacidad'].toString();
       descripcionController.text = data['descripcion'];
+    });
+  }
+
+  void _resetForm() {
+    setState(() {
+      nombreController.clear();
+      precioController.clear();
+      capacidadController.clear();
+      descripcionController.clear();
+      selectedTipo = "Habitación Superior";
+      editingId = null;
     });
   }
 
@@ -148,55 +207,79 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
             child: Column(
               children: [
                 TextField(
-                    controller: nombreController,
-                    decoration: InputDecoration(
-                      labelText: "Nombre",
-                      labelStyle: TextStyle(fontSize: 20),
-                    )),
-                DropdownButton<String>(
-                  value: selectedTipo,
-                  onChanged: (value) {
-                    setState(() {
-                      selectedTipo = value!;
-                    });
-                  },
-                  items: roomTypes
-                      .map((type) =>
-                          DropdownMenuItem(value: type, child: Text(type)))
-                      .toList(),
+                  controller: nombreController,
+                  decoration: InputDecoration(
+                    labelText: "Nombre",
+                    labelStyle: TextStyle(fontSize: 20),
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.room),
+                  ),
                 ),
-                TextField(
-                    controller: precioController,
-                    decoration: InputDecoration(
-                        labelText: "Precio",
-                        labelStyle: TextStyle(fontSize: 20)),
-                    keyboardType: TextInputType.number),
-                TextField(
-                    controller: capacidadController,
-                    decoration: InputDecoration(
-                        labelText: "Capacidad",
-                        labelStyle: TextStyle(fontSize: 20)),
-                    keyboardType: TextInputType.number),
-                TextField(
-                    controller: descripcionController,
-                    decoration: InputDecoration(
-                        labelText: "Descripción",
-                        labelStyle: TextStyle(fontSize: 20)),
-                    maxLines: 2),
-                SizedBox(height: 10),
-                _image != null
-                    ? Image.file(_image!, height: 100)
-                    : Container(height: 100, color: Colors.grey[300]),
-                TextButton.icon(
-                  onPressed: _pickImage,
-                  icon: Icon(Icons.image),
-                  label: Text("Seleccionar Nueva Imagen"),
+                SizedBox(height: 16),
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: DropdownButton<String>(
+                    isExpanded: true,
+                    value: selectedTipo,
+                    onChanged: (value) => setState(() => selectedTipo = value!),
+                    items: roomTypes
+                        .map((type) => DropdownMenuItem(
+                              value: type,
+                              child: Text(type, style: TextStyle(fontSize: 16)),
+                            ))
+                        .toList(),
+                  ),
                 ),
-                SizedBox(height: 10),
+                SizedBox(height: 16),
+                TextField(
+                  controller: precioController,
+                  decoration: InputDecoration(
+                    labelText: "Precio",
+                    labelStyle: TextStyle(fontSize: 20),
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.attach_money),
+                  ),
+                  keyboardType: TextInputType.numberWithOptions(decimal: true),
+                ),
+                SizedBox(height: 16),
+                TextField(
+                  controller: capacidadController,
+                  decoration: InputDecoration(
+                    labelText: "Capacidad",
+                    labelStyle: TextStyle(fontSize: 20),
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.people),
+                  ),
+                  keyboardType: TextInputType.number,
+                ),
+                SizedBox(height: 16),
+                TextField(
+                  controller: descripcionController,
+                  decoration: InputDecoration(
+                    labelText: "Descripción",
+                    labelStyle: TextStyle(fontSize: 20),
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.description),
+                  ),
+                  maxLines: 3,
+                ),
+                SizedBox(height: 20),
                 ElevatedButton(
                   onPressed: guardarAlojamiento,
-                  child: Text("Guardar Alojamiento",
-                      style: TextStyle(fontSize: 18)),
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    minimumSize: Size(double.infinity, 50),
+                  ),
+                  child: Text(
+                    editingId == null
+                        ? "Guardar Alojamiento"
+                        : "Actualizar Alojamiento",
+                    style: TextStyle(fontSize: 18),
+                  ),
                 ),
               ],
             ),
@@ -205,22 +288,32 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('alojamientos')
+                  .orderBy('nombre')
                   .snapshots(),
               builder: (context, snapshot) {
-                if (!snapshot.hasData)
+                if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator());
-                return ListView(
-                  children: snapshot.data!.docs.map((doc) {
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text("Error al cargar los datos"));
+                }
+
+                final rooms = snapshot.data?.docs ?? [];
+
+                if (rooms.isEmpty) {
+                  return Center(child: Text("No hay alojamientos registrados"));
+                }
+
+                return ListView.builder(
+                  itemCount: rooms.length,
+                  itemBuilder: (context, index) {
+                    final doc = rooms[index];
                     final data = doc.data() as Map<String, dynamic>;
                     return Card(
                       margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       child: ListTile(
-                        leading: (data['imagen'] != null &&
-                                data['imagen'].isNotEmpty)
-                            ? Image.network(data['imagen'],
-                                width: 50, height: 50, fit: BoxFit.cover)
-                            : Icon(Icons.image_not_supported,
-                                size: 50, color: Colors.grey),
+                        leading:
+                            Icon(Icons.room, size: 40, color: Colors.green),
                         title: Text("${data['tipo']} - ${data['nombre']}",
                             style: TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 18)),
@@ -243,7 +336,7 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
                         ),
                       ),
                     );
-                  }).toList(),
+                  },
                 );
               },
             ),
