@@ -255,18 +255,28 @@ class _ReservationScreenState extends State<ReservationScreen> {
       final alojamientoIds = _alojamientosSeleccionados.keys.toList();
 
       for (final alojamientoId in alojamientoIds) {
+        // Consulta modificada para evitar índices compuestos
         final query = await FirebaseFirestore.instance
             .collection('reservas')
             .where('alojamientos.alojamientoId', isEqualTo: alojamientoId)
-            .where('fechaEntrada', isLessThan: _fechaSalida!)
-            .where('fechaSalida', isGreaterThan: _fechaEntrada!)
-            .limit(1)
             .get();
 
-        if (query.docs.isNotEmpty) {
-          todosDisponibles = false;
-          break;
+        // Verificación manual de disponibilidad
+        for (final doc in query.docs) {
+          final reserva = doc.data();
+          final reservaEntrada =
+              (reserva['fechaEntrada'] as Timestamp).toDate();
+          final reservaSalida = (reserva['fechaSalida'] as Timestamp).toDate();
+
+          // Verificar solapamiento de fechas
+          if (_fechaEntrada!.isBefore(reservaSalida) &&
+              _fechaSalida!.isAfter(reservaEntrada)) {
+            todosDisponibles = false;
+            break;
+          }
         }
+
+        if (!todosDisponibles) break;
       }
 
       setState(() {
@@ -406,86 +416,99 @@ class _ReservationScreenState extends State<ReservationScreen> {
         throw Exception('Usuario no autenticado. Por favor inicie sesión.');
       }
 
-      // Verificar conexión a Internet
-      try {
-        await FirebaseFirestore.instance.runTransaction((transaction) async {});
-      } catch (e) {
-        throw Exception('Problema de conexión. Verifica tu internet.');
-      }
+      // Usamos una transacción para asegurar consistencia
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        // Verificación de disponibilidad dentro de la transacción
+        bool todosDisponibles = true;
+        final alojamientoIds = _alojamientosSeleccionados.keys.toList();
 
-      final reservasRef = FirebaseFirestore.instance.collection('reservas');
-      final docRef = reservasRef.doc();
+        for (final alojamientoId in alojamientoIds) {
+          final query = await FirebaseFirestore.instance
+              .collection('reservas')
+              .where('alojamientos.alojamientoId', isEqualTo: alojamientoId)
+              .get();
 
-      // Verificar permisos antes de intentar crear
-      try {
-        await docRef.set(
-            {'test': FieldValue.serverTimestamp()}, SetOptions(merge: true));
-        await docRef.delete();
-      } catch (e) {
-        throw Exception(
-            'No tienes permisos para crear reservas. Error: ${e.toString()}');
-      }
+          for (final doc in query.docs) {
+            final reserva = doc.data();
+            final reservaEntrada =
+                (reserva['fechaEntrada'] as Timestamp).toDate();
+            final reservaSalida =
+                (reserva['fechaSalida'] as Timestamp).toDate();
 
-      // Preparar datos de la reserva
-      final reservaData = {
-        'usuarioId': user.uid,
-        'nombre': _nombreController.text.trim(),
-        'email': _emailController.text.trim(),
-        'telefono': _telefonoController.text.trim(),
-        'huespedesTotales': int.tryParse(_huespedesController.text) ?? 1,
-        'fechaEntrada': Timestamp.fromDate(_fechaEntrada!),
-        'fechaSalida': Timestamp.fromDate(_fechaSalida!),
-        'alojamientos': _alojamientosSeleccionados.entries.map((entry) {
-          final alojamiento = entry.value['doc'] as DocumentSnapshot;
-          final huespedes = entry.value['huespedes'] as int;
-          final data = alojamiento.data() as Map<String, dynamic>;
-          return {
-            'alojamientoId': alojamiento.id,
-            'alojamientoNombre': data['nombre'],
-            'tipoAlojamiento': data['tipo'],
-            'huespedes': huespedes,
-            'precioPorAlojamiento': (data['precio'] as num).toDouble() *
-                huespedes *
-                _fechaSalida!.difference(_fechaEntrada!).inDays,
-          };
-        }).toList(),
-        'actividades': _actividadesSeleccionadas.entries.map((entry) {
-          final actividad = _actividadesDisponibles.firstWhere(
-            (doc) => doc.id == entry.key,
-          );
-          final data = actividad.data() as Map<String, dynamic>;
-          return {
-            'actividadId': entry.key,
-            'nombre': data['nombre'],
-            'precio': data['precio'],
-            'cantidad': entry.value,
-            'subtotal': (data['precio'] as num).toDouble() * entry.value,
-          };
-        }).toList(),
-        'alimentos': _alimentosSeleccionados.entries.map((entry) {
-          final alimento = _alimentosDisponibles.firstWhere(
-            (doc) => doc.id == entry.key,
-          );
-          final data = alimento.data() as Map<String, dynamic>;
-          return {
-            'alimentoId': entry.key,
-            'nombre': data['nombre'],
-            'precio': data['precio'],
-            'cantidad': entry.value,
-            'subtotal': (data['precio'] as num).toDouble() * entry.value,
-          };
-        }).toList(),
-        'precioTotal': precioTotal,
-        'abono': abono,
-        'metodoPago': _metodoPagoSeleccionado,
-        'saldoPendiente': _saldoPendiente,
-        'estado': 'pendiente',
-        'creadoEn': FieldValue.serverTimestamp(),
-        'actualizadoEn': FieldValue.serverTimestamp(),
-      };
+            if (_fechaEntrada!.isBefore(reservaSalida) &&
+                _fechaSalida!.isAfter(reservaEntrada)) {
+              todosDisponibles = false;
+              break;
+            }
+          }
 
-      // Crear documento de reserva
-      await docRef.set(reservaData);
+          if (!todosDisponibles) {
+            throw Exception(
+                'El alojamiento $alojamientoId ya no está disponible');
+          }
+        }
+
+        // Crear la reserva
+        final reservaData = {
+          'usuarioId': user.uid,
+          'nombre': _nombreController.text.trim(),
+          'email': _emailController.text.trim(),
+          'telefono': _telefonoController.text.trim(),
+          'huespedesTotales': int.tryParse(_huespedesController.text) ?? 1,
+          'fechaEntrada': Timestamp.fromDate(_fechaEntrada!),
+          'fechaSalida': Timestamp.fromDate(_fechaSalida!),
+          'alojamientos': _alojamientosSeleccionados.entries.map((entry) {
+            final alojamiento = entry.value['doc'] as DocumentSnapshot;
+            final huespedes = entry.value['huespedes'] as int;
+            final data = alojamiento.data() as Map<String, dynamic>;
+            return {
+              'alojamientoId': alojamiento.id,
+              'alojamientoNombre': data['nombre'],
+              'tipoAlojamiento': data['tipo'],
+              'huespedes': huespedes,
+              'precioPorAlojamiento': (data['precio'] as num).toDouble() *
+                  huespedes *
+                  _fechaSalida!.difference(_fechaEntrada!).inDays,
+            };
+          }).toList(),
+          'actividades': _actividadesSeleccionadas.entries.map((entry) {
+            final actividad = _actividadesDisponibles.firstWhere(
+              (doc) => doc.id == entry.key,
+            );
+            final data = actividad.data() as Map<String, dynamic>;
+            return {
+              'actividadId': entry.key,
+              'nombre': data['nombre'],
+              'precio': data['precio'],
+              'cantidad': entry.value,
+              'subtotal': (data['precio'] as num).toDouble() * entry.value,
+            };
+          }).toList(),
+          'alimentos': _alimentosSeleccionados.entries.map((entry) {
+            final alimento = _alimentosDisponibles.firstWhere(
+              (doc) => doc.id == entry.key,
+            );
+            final data = alimento.data() as Map<String, dynamic>;
+            return {
+              'alimentoId': entry.key,
+              'nombre': data['nombre'],
+              'precio': data['precio'],
+              'cantidad': entry.value,
+              'subtotal': (data['precio'] as num).toDouble() * entry.value,
+            };
+          }).toList(),
+          'precioTotal': precioTotal,
+          'abono': abono,
+          'metodoPago': _metodoPagoSeleccionado,
+          'saldoPendiente': _saldoPendiente,
+          'estado': 'pendiente',
+          'creadoEn': FieldValue.serverTimestamp(),
+          'actualizadoEn': FieldValue.serverTimestamp(),
+        };
+
+        final docRef = FirebaseFirestore.instance.collection('reservas').doc();
+        transaction.set(docRef, reservaData);
+      });
 
       _mostrarExito(
           'Reserva creada correctamente con ${_alojamientosSeleccionados.length} alojamientos\n'
@@ -516,31 +539,1208 @@ class _ReservationScreenState extends State<ReservationScreen> {
     }
   }
 
-  void _limpiarFormulario() {
-    _nombreController.clear();
-    _emailController.clear();
-    _telefonoController.clear();
-    _huespedesController.text = '1';
-    _abonoController.clear();
-    setState(() {
-      _fechaEntrada = null;
-      _fechaSalida = null;
-      _tipoAlojamientoSeleccionado = null;
-      _alojamientosSeleccionados.clear();
-      _precioTotal = null;
-      _disponibilidadVerificada = false;
-      _todosAlojamientosDisponibles = false;
-      _mostrarActividades = false;
-      _deseaActividades = false;
-      _actividadesSeleccionadas.clear();
-      _actividadesDisponibles.clear();
-      _mostrarAlimentos = false;
-      _deseaAlimentos = false;
-      _alimentosSeleccionados.clear();
-      _alimentosDisponibles.clear();
-      _metodoPagoSeleccionado = null;
-      _saldoPendiente = 0;
-    });
+  // [Mantener todos los demás métodos auxiliares y widgets de construcción de UI]
+  // ... (todos los métodos _build* y widgets permanecen iguales)
+
+  @override
+  Widget build(BuildContext context) {
+    final alojamientosFiltrados = _filtrarAlojamientos();
+    final numNoches = _fechaEntrada != null && _fechaSalida != null
+        ? _fechaSalida!.difference(_fechaEntrada!).inDays
+        : 0;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Nueva Reserva',
+            style: TextStyle(fontSize: 28, color: Colors.white)),
+        backgroundColor: Colors.green[700],
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: _isLoadingAlojamientos && _listaAlojamientosDisponibles.isEmpty
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Sección 1: Datos Personales
+                    Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Datos Personales',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green[700],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _nombreController,
+                              decoration: InputDecoration(
+                                labelText: 'Nombre Completo',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.person),
+                              ),
+                              validator: (value) =>
+                                  value!.isEmpty ? 'Ingrese su nombre' : null,
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _emailController,
+                              decoration: InputDecoration(
+                                labelText: 'Correo Electrónico',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.email),
+                              ),
+                              validator: (value) => !value!.contains('@')
+                                  ? 'Ingrese un correo válido'
+                                  : null,
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _telefonoController,
+                              decoration: InputDecoration(
+                                labelText: 'Teléfono',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.phone),
+                              ),
+                              validator: (value) => value!.length < 8
+                                  ? 'Mínimo 8 caracteres'
+                                  : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Sección 2: Detalles de la Reserva
+                    Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Detalles de la Reserva',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green[700],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextFormField(
+                              controller: _huespedesController,
+                              decoration: InputDecoration(
+                                labelText: 'Número Total de Huéspedes',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.people),
+                              ),
+                              keyboardType: TextInputType.number,
+                            ),
+                            const SizedBox(height: 16),
+                            ListTile(
+                              leading: Icon(Icons.calendar_today,
+                                  color: Colors.green[700]),
+                              title: Text('Fecha de Entrada'),
+                              subtitle: Text(_fechaEntrada == null
+                                  ? 'Seleccionar fecha'
+                                  : DateFormat('dd/MM/yyyy')
+                                      .format(_fechaEntrada!)),
+                              trailing: Icon(Icons.arrow_forward_ios),
+                              onTap: () => _seleccionarFecha(true),
+                            ),
+                            const Divider(),
+                            ListTile(
+                              leading: Icon(Icons.calendar_today,
+                                  color: Colors.green[700]),
+                              title: Text('Fecha de Salida'),
+                              subtitle: Text(_fechaSalida == null
+                                  ? 'Seleccionar fecha'
+                                  : DateFormat('dd/MM/yyyy')
+                                      .format(_fechaSalida!)),
+                              trailing: Icon(Icons.arrow_forward_ios),
+                              onTap: () => _seleccionarFecha(false),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Sección 3: Tipo de Alojamiento
+                    Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Tipo de Alojamiento',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green[700],
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            DropdownButtonFormField<String>(
+                              value: _tipoAlojamientoSeleccionado,
+                              decoration: InputDecoration(
+                                border: OutlineInputBorder(),
+                                labelText: 'Seleccione un tipo',
+                              ),
+                              items: _tiposAlojamiento.map((tipo) {
+                                return DropdownMenuItem<String>(
+                                  value: tipo,
+                                  child: Text(tipo),
+                                );
+                              }).toList(),
+                              onChanged: (value) {
+                                setState(() {
+                                  _tipoAlojamientoSeleccionado = value;
+                                  _alojamientosSeleccionados.clear();
+                                  _disponibilidadVerificada = false;
+                                  _precioTotal = _calcularPrecioTotal();
+                                  _calcularSaldoPendiente();
+                                });
+                              },
+                              validator: (value) =>
+                                  value == null ? 'Seleccione un tipo' : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Sección 4: Alojamientos Disponibles
+                    if (_tipoAlojamientoSeleccionado != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text(
+                          'Alojamientos Disponibles ($_tipoAlojamientoSeleccionado)',
+                          style: TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      if (alojamientosFiltrados.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(
+                              'No hay alojamientos disponibles de este tipo'),
+                        )
+                      else
+                        ...alojamientosFiltrados.map((alojamiento) {
+                          final data =
+                              alojamiento.data() as Map<String, dynamic>;
+                          final isSelected = _alojamientosSeleccionados
+                              .containsKey(alojamiento.id);
+                          final huespedes = isSelected
+                              ? _alojamientosSeleccionados[alojamiento.id]![
+                                  'huespedes'] as int
+                              : 1;
+
+                          return Card(
+                            margin: EdgeInsets.only(bottom: 10),
+                            color: isSelected ? Colors.green[50] : null,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(
+                                color: isSelected
+                                    ? Colors.green
+                                    : Colors.grey[300]!,
+                                width: 1,
+                              ),
+                            ),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              onTap: () =>
+                                  _toggleAlojamientoSeleccionado(alojamiento),
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            data['nombre'],
+                                            style: TextStyle(
+                                                fontSize: 18,
+                                                fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                        if (isSelected)
+                                          Icon(Icons.check_circle,
+                                              color: Colors.green),
+                                      ],
+                                    ),
+                                    SizedBox(height: 4),
+                                    Text(
+                                      'Tipo: ${data['tipo']}',
+                                      style: TextStyle(
+                                          fontSize: 16,
+                                          color: Colors.grey[600]),
+                                    ),
+                                    SizedBox(height: 8),
+                                    Text(
+                                        'Capacidad: ${data['capacidad']} personas'),
+                                    Text(
+                                      'Precio: \$${data['precio']} por persona/noche',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.green[700],
+                                      ),
+                                    ),
+                                    if (data['descripcion'] != null)
+                                      Padding(
+                                        padding: EdgeInsets.only(top: 8),
+                                        child: Text(data['descripcion']),
+                                      ),
+                                    if (isSelected)
+                                      _buildHuespedesCounter(alojamiento.id,
+                                          huespedes, data['capacidad']),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
+                      const SizedBox(height: 20),
+
+                      // Resumen de alojamientos seleccionados
+                      if (_alojamientosSeleccionados.isNotEmpty) ...[
+                        Text(
+                          'Alojamientos seleccionados: ${_alojamientosSeleccionados.length}/10',
+                          style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue),
+                        ),
+                        SizedBox(height: 10),
+                        ..._alojamientosSeleccionados.entries.map((entry) {
+                          final alojamiento =
+                              entry.value['doc'] as DocumentSnapshot;
+                          return Padding(
+                            padding: EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              '- ${alojamiento['nombre']} (${entry.value['huespedes']} huéspedes)',
+                              style: TextStyle(
+                                  fontSize: 16, color: Colors.grey[700]),
+                            ),
+                          );
+                        }),
+                        SizedBox(height: 20),
+                      ],
+
+                      if (_alojamientosSeleccionados.isNotEmpty &&
+                          _fechaEntrada != null &&
+                          _fechaSalida != null)
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue,
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            onPressed: _isLoadingDisponibilidad
+                                ? null
+                                : _verificarDisponibilidad,
+                            child: _isLoadingDisponibilidad
+                                ? CircularProgressIndicator(color: Colors.white)
+                                : Text('Verificar Disponibilidad',
+                                    style: TextStyle(fontSize: 18)),
+                          ),
+                        ),
+
+                      if (_disponibilidadVerificada)
+                        Padding(
+                          padding: EdgeInsets.only(top: 16),
+                          child: Card(
+                            color: _todosAlojamientosDisponibles
+                                ? Colors.green[50]
+                                : Colors.red[50],
+                            child: Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _todosAlojamientosDisponibles
+                                        ? Icons.check_circle
+                                        : Icons.error,
+                                    color: _todosAlojamientosDisponibles
+                                        ? Colors.green
+                                        : Colors.red,
+                                  ),
+                                  SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      _todosAlojamientosDisponibles
+                                          ? 'Todos los alojamientos están disponibles'
+                                          : 'Uno o más alojamientos no están disponibles',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: _todosAlojamientosDisponibles
+                                            ? Colors.green
+                                            : Colors.red,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+
+                    // Sección 5: Actividades
+                    if (_mostrarActividades) ...[
+                      SizedBox(height: 20),
+                      Card(
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Actividades Adicionales',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green[700],
+                                ),
+                              ),
+                              SizedBox(height: 16),
+                              Text(
+                                  '¿Desea agendar alguna actividad durante su estadía?'),
+                              SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: _deseaActividades
+                                            ? Colors.green[700]
+                                            : Colors.grey[300],
+                                        foregroundColor: _deseaActividades
+                                            ? Colors.white
+                                            : Colors.black,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _deseaActividades = true;
+                                        });
+                                      },
+                                      child: Text('Sí'),
+                                    ),
+                                  ),
+                                  SizedBox(width: 10),
+                                  Expanded(
+                                    child: ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: !_deseaActividades
+                                            ? Colors.red[700]
+                                            : Colors.grey[300],
+                                        foregroundColor: !_deseaActividades
+                                            ? Colors.white
+                                            : Colors.black,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _deseaActividades = false;
+                                          _actividadesSeleccionadas.clear();
+                                          _precioTotal = _calcularPrecioTotal();
+                                          _calcularSaldoPendiente();
+                                        });
+                                      },
+                                      child: Text('No'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (_deseaActividades) ...[
+                                SizedBox(height: 20),
+                                Text('Seleccione las actividades que desea:'),
+                                SizedBox(height: 10),
+                                if (_isLoadingActividades)
+                                  Center(child: CircularProgressIndicator())
+                                else if (_actividadesDisponibles.isEmpty)
+                                  Padding(
+                                    padding: EdgeInsets.all(8.0),
+                                    child:
+                                        Text('No hay actividades disponibles'),
+                                  )
+                                else
+                                  ..._actividadesDisponibles.map((actividad) {
+                                    final data = actividad.data()
+                                        as Map<String, dynamic>;
+                                    final isSelected = _actividadesSeleccionadas
+                                        .containsKey(actividad.id);
+                                    final cantidad = isSelected
+                                        ? _actividadesSeleccionadas[
+                                            actividad.id]!
+                                        : 1;
+
+                                    return Card(
+                                      margin: EdgeInsets.only(bottom: 10),
+                                      color:
+                                          isSelected ? Colors.green[50] : null,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        side: BorderSide(
+                                          color: isSelected
+                                              ? Colors.green
+                                              : Colors.grey[300]!,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(12),
+                                        onTap: () {
+                                          setState(() {
+                                            if (isSelected) {
+                                              _actividadesSeleccionadas
+                                                  .remove(actividad.id);
+                                            } else {
+                                              _actividadesSeleccionadas[
+                                                  actividad.id] = 1;
+                                            }
+                                            _precioTotal =
+                                                _calcularPrecioTotal();
+                                            _calcularSaldoPendiente();
+                                          });
+                                        },
+                                        child: Padding(
+                                          padding: EdgeInsets.all(16),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      data['nombre'],
+                                                      style: TextStyle(
+                                                          fontSize: 18,
+                                                          fontWeight:
+                                                              FontWeight.bold),
+                                                    ),
+                                                  ),
+                                                  if (isSelected)
+                                                    Icon(Icons.check_circle,
+                                                        color: Colors.green),
+                                                ],
+                                              ),
+                                              SizedBox(height: 4),
+                                              Text(
+                                                'Precio: \$${data['precio']} por persona',
+                                                style: TextStyle(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.green[700],
+                                                ),
+                                              ),
+                                              if (isSelected)
+                                                _buildActividadCounter(
+                                                    actividad.id, cantidad),
+                                              if (data['descripcion'] != null)
+                                                Padding(
+                                                  padding:
+                                                      EdgeInsets.only(top: 8),
+                                                  child:
+                                                      Text(data['descripcion']),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    // Sección 6: Alimentos
+                    if (_mostrarAlimentos) ...[
+                      SizedBox(height: 20),
+                      Card(
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Servicio de Alimentos',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green[700],
+                                ),
+                              ),
+                              SizedBox(height: 16),
+                              Text(
+                                  '¿Desea incluir servicio de alimentos durante su estadía?'),
+                              SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: _deseaAlimentos
+                                            ? Colors.green[700]
+                                            : Colors.grey[300],
+                                        foregroundColor: _deseaAlimentos
+                                            ? Colors.white
+                                            : Colors.black,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _deseaAlimentos = true;
+                                        });
+                                      },
+                                      child: Text('Sí'),
+                                    ),
+                                  ),
+                                  SizedBox(width: 10),
+                                  Expanded(
+                                    child: ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: !_deseaAlimentos
+                                            ? Colors.red[700]
+                                            : Colors.grey[300],
+                                        foregroundColor: !_deseaAlimentos
+                                            ? Colors.white
+                                            : Colors.black,
+                                      ),
+                                      onPressed: () {
+                                        setState(() {
+                                          _deseaAlimentos = false;
+                                          _alimentosSeleccionados.clear();
+                                          _precioTotal = _calcularPrecioTotal();
+                                          _calcularSaldoPendiente();
+                                        });
+                                      },
+                                      child: Text('No'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (_deseaAlimentos) ...[
+                                SizedBox(height: 20),
+                                Text(
+                                    'Seleccione los alimentos que desea incluir:'),
+                                SizedBox(height: 10),
+                                if (_isLoadingAlimentos)
+                                  Center(child: CircularProgressIndicator())
+                                else if (_alimentosDisponibles.isEmpty)
+                                  Padding(
+                                    padding: EdgeInsets.all(8.0),
+                                    child: Text(
+                                        'No hay opciones de alimento disponibles'),
+                                  )
+                                else
+                                  ..._alimentosDisponibles.map((alimento) {
+                                    final data =
+                                        alimento.data() as Map<String, dynamic>;
+                                    final isSelected = _alimentosSeleccionados
+                                        .containsKey(alimento.id);
+                                    final cantidad = isSelected
+                                        ? _alimentosSeleccionados[alimento.id]!
+                                        : 1;
+
+                                    return Card(
+                                      margin: EdgeInsets.only(bottom: 10),
+                                      color:
+                                          isSelected ? Colors.green[50] : null,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        side: BorderSide(
+                                          color: isSelected
+                                              ? Colors.green
+                                              : Colors.grey[300]!,
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: InkWell(
+                                        borderRadius: BorderRadius.circular(12),
+                                        onTap: () {
+                                          setState(() {
+                                            if (isSelected) {
+                                              _alimentosSeleccionados
+                                                  .remove(alimento.id);
+                                            } else {
+                                              _alimentosSeleccionados[
+                                                  alimento.id] = 1;
+                                            }
+                                            _precioTotal =
+                                                _calcularPrecioTotal();
+                                            _calcularSaldoPendiente();
+                                          });
+                                        },
+                                        child: Padding(
+                                          padding: EdgeInsets.all(16),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      data['nombre'],
+                                                      style: TextStyle(
+                                                          fontSize: 18,
+                                                          fontWeight:
+                                                              FontWeight.bold),
+                                                    ),
+                                                  ),
+                                                  if (isSelected)
+                                                    Icon(Icons.check_circle,
+                                                        color: Colors.green),
+                                                ],
+                                              ),
+                                              SizedBox(height: 4),
+                                              Text(
+                                                'Precio: \$${data['precio']} por servicio',
+                                                style: TextStyle(
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.green[700],
+                                                ),
+                                              ),
+                                              if (isSelected)
+                                                _buildAlimentoCounter(
+                                                    alimento.id, cantidad),
+                                              if (data['descripcion'] != null)
+                                                Padding(
+                                                  padding:
+                                                      EdgeInsets.only(top: 8),
+                                                  child:
+                                                      Text(data['descripcion']),
+                                                ),
+                                              if (data['tipo'] != null)
+                                                Padding(
+                                                  padding:
+                                                      EdgeInsets.only(top: 4),
+                                                  child: Chip(
+                                                    label: Text(data['tipo']),
+                                                    backgroundColor:
+                                                        Colors.blue[50],
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    // Sección 7: Pago
+                    if (_precioTotal != null && _precioTotal! > 0) ...[
+                      SizedBox(height: 20),
+                      Card(
+                        elevation: 4,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Información de Pago',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green[700],
+                                ),
+                              ),
+                              SizedBox(height: 16),
+                              TextFormField(
+                                controller: _abonoController,
+                                decoration: InputDecoration(
+                                  labelText: 'Monto abonado',
+                                  border: OutlineInputBorder(),
+                                  prefixIcon: Icon(Icons.attach_money),
+                                  suffixText: '\$',
+                                ),
+                                keyboardType: TextInputType.numberWithOptions(
+                                    decimal: true),
+                                validator: (value) {
+                                  final abono =
+                                      double.tryParse(value ?? '') ?? 0;
+                                  if (abono <= 0)
+                                    return 'El abono debe ser mayor a cero';
+                                  final total = _calcularPrecioTotal() ?? 0;
+                                  if (abono > total)
+                                    return 'El abono no puede superar el total';
+                                  return null;
+                                },
+                              ),
+                              SizedBox(height: 16),
+                              DropdownButtonFormField<String>(
+                                value: _metodoPagoSeleccionado,
+                                decoration: InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  labelText: 'Método de pago',
+                                ),
+                                items: _metodosPago.map((metodo) {
+                                  return DropdownMenuItem<String>(
+                                    value: metodo,
+                                    child: Text(metodo),
+                                  );
+                                }).toList(),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _metodoPagoSeleccionado = value;
+                                  });
+                                },
+                                validator: (value) => value == null
+                                    ? 'Seleccione un método de pago'
+                                    : null,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+
+                    // Sección 8: Resumen de Reserva
+                    Card(
+                      elevation: 4,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Resumen de Reserva',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green[700],
+                              ),
+                            ),
+                            SizedBox(height: 16),
+                            if (_alojamientosSeleccionados.isNotEmpty)
+                              Column(
+                                children: _alojamientosSeleccionados.entries
+                                    .map((entry) {
+                                  final alojamiento =
+                                      entry.value['doc'] as DocumentSnapshot;
+                                  final data = alojamiento.data()
+                                      as Map<String, dynamic>;
+                                  final huespedes =
+                                      entry.value['huespedes'] as int;
+                                  final precioPorNoche =
+                                      (data['precio'] as num).toDouble();
+
+                                  return Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 8),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(data['nombre'],
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.bold)),
+                                        Padding(
+                                          padding:
+                                              EdgeInsets.symmetric(vertical: 8),
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Text('Huéspedes:',
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600])),
+                                              Text('$huespedes',
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold)),
+                                            ],
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding:
+                                              EdgeInsets.symmetric(vertical: 8),
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Text('Precio/noche:',
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600])),
+                                              Text(
+                                                  '\$${(precioPorNoche * huespedes).toStringAsFixed(2)}',
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold)),
+                                            ],
+                                          ),
+                                        ),
+                                        Padding(
+                                          padding:
+                                              EdgeInsets.symmetric(vertical: 8),
+                                          child: Row(
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Text('Total:',
+                                                  style: TextStyle(
+                                                      color: Colors.grey[600])),
+                                              Text(
+                                                  '\$${(precioPorNoche * huespedes * numNoches).toStringAsFixed(2)}',
+                                                  style: TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold)),
+                                            ],
+                                          ),
+                                        ),
+                                        Divider(),
+                                      ],
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
+                            if (_deseaActividades &&
+                                _actividadesSeleccionadas.isNotEmpty) ...[
+                              SizedBox(height: 16),
+                              Text(
+                                'Actividades seleccionadas:',
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                              ..._actividadesSeleccionadas.entries.map((entry) {
+                                final actividadId = entry.key;
+                                final cantidad = entry.value;
+                                final actividad =
+                                    _actividadesDisponibles.firstWhere(
+                                  (doc) => doc.id == actividadId,
+                                );
+                                final data =
+                                    actividad.data() as Map<String, dynamic>;
+                                final precio =
+                                    (data['precio'] as num).toDouble();
+
+                                return Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Column(
+                                    children: [
+                                      Padding(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 8),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                                '${data['nombre']} (x$cantidad)',
+                                                style: TextStyle(
+                                                    color: Colors.grey[600])),
+                                            Text(
+                                                '\$${(precio * cantidad).toStringAsFixed(2)}',
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                          ],
+                                        ),
+                                      ),
+                                      Divider(),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                            if (_deseaAlimentos &&
+                                _alimentosSeleccionados.isNotEmpty) ...[
+                              SizedBox(height: 16),
+                              Text(
+                                'Alimentos seleccionados:',
+                                style: TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.bold),
+                              ),
+                              ..._alimentosSeleccionados.entries.map((entry) {
+                                final alimentoId = entry.key;
+                                final cantidad = entry.value;
+                                final alimento =
+                                    _alimentosDisponibles.firstWhere(
+                                  (doc) => doc.id == alimentoId,
+                                );
+                                final data =
+                                    alimento.data() as Map<String, dynamic>;
+                                final precio =
+                                    (data['precio'] as num).toDouble();
+
+                                return Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 8),
+                                  child: Column(
+                                    children: [
+                                      Padding(
+                                        padding:
+                                            EdgeInsets.symmetric(vertical: 8),
+                                        child: Row(
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Text(
+                                                '${data['nombre']} (x$cantidad)',
+                                                style: TextStyle(
+                                                    color: Colors.grey[600])),
+                                            Text(
+                                                '\$${(precio * cantidad).toStringAsFixed(2)}',
+                                                style: TextStyle(
+                                                    fontWeight:
+                                                        FontWeight.bold)),
+                                          ],
+                                        ),
+                                      ),
+                                      Divider(),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            ],
+                            Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Total Reserva:',
+                                      style:
+                                          TextStyle(color: Colors.grey[600])),
+                                  Text(
+                                      '\$${_precioTotal?.toStringAsFixed(2) ?? "0.00"}',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Abonado:',
+                                      style:
+                                          TextStyle(color: Colors.grey[600])),
+                                  Text(
+                                      '\$${double.tryParse(_abonoController.text)?.toStringAsFixed(2) ?? "0.00"}',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Saldo Pendiente:',
+                                      style:
+                                          TextStyle(color: Colors.grey[600])),
+                                  Text(
+                                      '\$${_saldoPendiente.toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        color: _saldoPendiente > 0
+                                            ? Colors.red
+                                            : Colors.green,
+                                        fontWeight: FontWeight.bold,
+                                      )),
+                                ],
+                              ),
+                            ),
+                            if (_metodoPagoSeleccionado != null)
+                              Padding(
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text('Método de pago:',
+                                        style:
+                                            TextStyle(color: Colors.grey[600])),
+                                    Text(_metodoPagoSeleccionado!,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold)),
+                                  ],
+                                ),
+                              ),
+                            Divider(),
+                            Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Huéspedes totales:',
+                                      style:
+                                          TextStyle(color: Colors.grey[600])),
+                                  Text(_huespedesController.text,
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Fecha Entrada:',
+                                      style:
+                                          TextStyle(color: Colors.grey[600])),
+                                  Text(
+                                      _fechaEntrada != null
+                                          ? DateFormat('dd/MM/yyyy')
+                                              .format(_fechaEntrada!)
+                                          : 'No seleccionada',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Fecha Salida:',
+                                      style:
+                                          TextStyle(color: Colors.grey[600])),
+                                  Text(
+                                      _fechaSalida != null
+                                          ? DateFormat('dd/MM/yyyy')
+                                              .format(_fechaSalida!)
+                                          : 'No seleccionada',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                            Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text('Noches:',
+                                      style:
+                                          TextStyle(color: Colors.grey[600])),
+                                  Text(numNoches.toString(),
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                            Divider(),
+                            if (_precioTotal != null)
+                              Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Precio Total:',
+                                    style:
+                                        TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                  Text(
+                                    '\$${_precioTotal!.toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green[700],
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            else
+                              Text(
+                                'Complete los datos para ver el precio',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 20),
+
+                    // Botón de Confirmación
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green[700],
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: (_isLoadingReserva ||
+                                !_todosAlojamientosDisponibles)
+                            ? null
+                            : _crearReserva,
+                        child: _isLoadingReserva
+                            ? CircularProgressIndicator(color: Colors.white)
+                            : Text('Confirmar Reserva',
+                                style: TextStyle(fontSize: 18)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+    );
   }
 
   Future<void> _seleccionarFecha(bool esEntrada) async {
@@ -548,10 +1748,10 @@ class _ReservationScreenState extends State<ReservationScreen> {
       context: context,
       initialDate: esEntrada
           ? DateTime.now()
-          : _fechaEntrada?.add(const Duration(days: 1)) ??
-              DateTime.now().add(const Duration(days: 1)),
+          : _fechaEntrada?.add(Duration(days: 1)) ??
+              DateTime.now().add(Duration(days: 1)),
       firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      lastDate: DateTime.now().add(Duration(days: 365)),
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -576,9 +1776,8 @@ class _ReservationScreenState extends State<ReservationScreen> {
         if (esEntrada) {
           _fechaEntrada = fechaSeleccionada;
           if (_fechaSalida != null &&
-              _fechaSalida!
-                  .isBefore(_fechaEntrada!.add(const Duration(days: 1)))) {
-            _fechaSalida = _fechaEntrada!.add(const Duration(days: 1));
+              _fechaSalida!.isBefore(_fechaEntrada!.add(Duration(days: 1)))) {
+            _fechaSalida = _fechaEntrada!.add(Duration(days: 1));
           }
         } else {
           _fechaSalida = fechaSeleccionada;
@@ -688,678 +1887,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
     );
   }
 
-  Widget _buildSeleccionActividades() {
-    if (!_mostrarActividades) return SizedBox.shrink();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 20),
-        Card(
-          elevation: 4,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Actividades Adicionales',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green[700],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                    '¿Desea agendar alguna actividad durante su estadía?'),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _deseaActividades
-                              ? Colors.green[700]
-                              : Colors.grey[300],
-                          foregroundColor:
-                              _deseaActividades ? Colors.white : Colors.black,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _deseaActividades = true;
-                          });
-                        },
-                        child: const Text('Sí'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: !_deseaActividades
-                              ? Colors.red[700]
-                              : Colors.grey[300],
-                          foregroundColor:
-                              !_deseaActividades ? Colors.white : Colors.black,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _deseaActividades = false;
-                            _actividadesSeleccionadas.clear();
-                            _precioTotal = _calcularPrecioTotal();
-                            _calcularSaldoPendiente();
-                          });
-                        },
-                        child: const Text('No'),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_deseaActividades) ...[
-                  const SizedBox(height: 20),
-                  const Text('Seleccione las actividades que desea:'),
-                  const SizedBox(height: 10),
-                  if (_isLoadingActividades)
-                    const Center(child: CircularProgressIndicator())
-                  else if (_actividadesDisponibles.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: Text('No hay actividades disponibles'),
-                    )
-                  else
-                    ..._actividadesDisponibles.map((actividad) {
-                      final data = actividad.data() as Map<String, dynamic>;
-                      final isSelected =
-                          _actividadesSeleccionadas.containsKey(actividad.id);
-                      final cantidad = isSelected
-                          ? _actividadesSeleccionadas[actividad.id]!
-                          : 1;
-
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        color: isSelected ? Colors.green[50] : null,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(
-                            color:
-                                isSelected ? Colors.green : Colors.grey[300]!,
-                            width: 1,
-                          ),
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () {
-                            setState(() {
-                              if (isSelected) {
-                                _actividadesSeleccionadas.remove(actividad.id);
-                              } else {
-                                _actividadesSeleccionadas[actividad.id] = 1;
-                              }
-                              _precioTotal = _calcularPrecioTotal();
-                              _calcularSaldoPendiente();
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        data['nombre'],
-                                        style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                    if (isSelected)
-                                      const Icon(Icons.check_circle,
-                                          color: Colors.green),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Precio: \$${data['precio']} por persona',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.green[700],
-                                  ),
-                                ),
-                                if (isSelected)
-                                  _buildActividadCounter(
-                                      actividad.id, cantidad),
-                                if (data['descripcion'] != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: Text(data['descripcion']),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSeleccionAlimentos() {
-    if (!_mostrarAlimentos) return SizedBox.shrink();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 20),
-        Card(
-          elevation: 4,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Servicio de Alimentos',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green[700],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                    '¿Desea incluir servicio de alimentos durante su estadía?'),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _deseaAlimentos
-                              ? Colors.green[700]
-                              : Colors.grey[300],
-                          foregroundColor:
-                              _deseaAlimentos ? Colors.white : Colors.black,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _deseaAlimentos = true;
-                          });
-                        },
-                        child: const Text('Sí'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: !_deseaAlimentos
-                              ? Colors.red[700]
-                              : Colors.grey[300],
-                          foregroundColor:
-                              !_deseaAlimentos ? Colors.white : Colors.black,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _deseaAlimentos = false;
-                            _alimentosSeleccionados.clear();
-                            _precioTotal = _calcularPrecioTotal();
-                            _calcularSaldoPendiente();
-                          });
-                        },
-                        child: const Text('No'),
-                      ),
-                    ),
-                  ],
-                ),
-                if (_deseaAlimentos) ...[
-                  const SizedBox(height: 20),
-                  const Text('Seleccione los alimentos que desea incluir:'),
-                  const SizedBox(height: 10),
-                  if (_isLoadingAlimentos)
-                    const Center(child: CircularProgressIndicator())
-                  else if (_alimentosDisponibles.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(8.0),
-                      child: Text('No hay opciones de alimento disponibles'),
-                    )
-                  else
-                    ..._alimentosDisponibles.map((alimento) {
-                      final data = alimento.data() as Map<String, dynamic>;
-                      final isSelected =
-                          _alimentosSeleccionados.containsKey(alimento.id);
-                      final cantidad = isSelected
-                          ? _alimentosSeleccionados[alimento.id]!
-                          : 1;
-
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        color: isSelected ? Colors.green[50] : null,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          side: BorderSide(
-                            color:
-                                isSelected ? Colors.green : Colors.grey[300]!,
-                            width: 1,
-                          ),
-                        ),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () {
-                            setState(() {
-                              if (isSelected) {
-                                _alimentosSeleccionados.remove(alimento.id);
-                              } else {
-                                _alimentosSeleccionados[alimento.id] = 1;
-                              }
-                              _precioTotal = _calcularPrecioTotal();
-                              _calcularSaldoPendiente();
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.all(16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        data['nombre'],
-                                        style: const TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                    if (isSelected)
-                                      const Icon(Icons.check_circle,
-                                          color: Colors.green),
-                                  ],
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Precio: \$${data['precio']} por servicio',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.green[700],
-                                  ),
-                                ),
-                                if (isSelected)
-                                  _buildAlimentoCounter(alimento.id, cantidad),
-                                if (data['descripcion'] != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 8),
-                                    child: Text(data['descripcion']),
-                                  ),
-                                if (data['tipo'] != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 4),
-                                    child: Chip(
-                                      label: Text(data['tipo']),
-                                      backgroundColor: Colors.blue[50],
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    }),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSeccionPago() {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Información de Pago',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.green[700],
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _abonoController,
-              decoration: InputDecoration(
-                labelText: 'Monto abonado',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.attach_money),
-                suffixText: '\$',
-              ),
-              keyboardType: TextInputType.numberWithOptions(decimal: true),
-              validator: (value) {
-                final abono = double.tryParse(value ?? '') ?? 0;
-                if (abono <= 0) return 'El abono debe ser mayor a cero';
-                final total = _calcularPrecioTotal() ?? 0;
-                if (abono > total) return 'El abono no puede superar el total';
-                return null;
-              },
-            ),
-            SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              value: _metodoPagoSeleccionado,
-              decoration: InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'Método de pago',
-              ),
-              items: _metodosPago.map((metodo) {
-                return DropdownMenuItem<String>(
-                  value: metodo,
-                  child: Text(metodo),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _metodoPagoSeleccionado = value;
-                });
-              },
-              validator: (value) =>
-                  value == null ? 'Seleccione un método de pago' : null,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildResumenAlojamientos(int numNoches) {
-    return Column(
-      children: _alojamientosSeleccionados.entries.map((entry) {
-        final alojamiento = entry.value['doc'] as DocumentSnapshot;
-        final data = alojamiento.data() as Map<String, dynamic>;
-        final huespedes = entry.value['huespedes'] as int;
-        final precioPorNoche = (data['precio'] as num).toDouble();
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(data['nombre'],
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              _buildResumenItem('Huéspedes:', '$huespedes'),
-              _buildResumenItem('Precio/noche:',
-                  '\$${(precioPorNoche * huespedes).toStringAsFixed(2)}'),
-              _buildResumenItem('Total:',
-                  '\$${(precioPorNoche * huespedes * numNoches).toStringAsFixed(2)}'),
-              Divider(),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _buildResumenActividades() {
-    if (!_deseaActividades || _actividadesSeleccionadas.isEmpty)
-      return SizedBox.shrink();
-
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        const Text(
-          'Actividades seleccionadas:',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-        ..._actividadesSeleccionadas.entries.map((entry) {
-          final actividadId = entry.key;
-          final cantidad = entry.value;
-          final actividad = _actividadesDisponibles.firstWhere(
-            (doc) => doc.id == actividadId,
-          );
-          final data = actividad.data() as Map<String, dynamic>;
-          final precio = (data['precio'] as num).toDouble();
-
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              children: [
-                _buildResumenItem(
-                  '${data['nombre']} (x$cantidad)',
-                  '\$${(precio * cantidad).toStringAsFixed(2)}',
-                ),
-                Divider(),
-              ],
-            ),
-          );
-        }),
-      ],
-    );
-  }
-
-  Widget _buildResumenAlimentos() {
-    if (!_deseaAlimentos || _alimentosSeleccionados.isEmpty)
-      return SizedBox.shrink();
-
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        const Text(
-          'Alimentos seleccionados:',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-        ),
-        ..._alimentosSeleccionados.entries.map((entry) {
-          final alimentoId = entry.key;
-          final cantidad = entry.value;
-          final alimento = _alimentosDisponibles.firstWhere(
-            (doc) => doc.id == alimentoId,
-          );
-          final data = alimento.data() as Map<String, dynamic>;
-          final precio = (data['precio'] as num).toDouble();
-
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Column(
-              children: [
-                _buildResumenItem(
-                  '${data['nombre']} (x$cantidad)',
-                  '\$${(precio * cantidad).toStringAsFixed(2)}',
-                ),
-                Divider(),
-              ],
-            ),
-          );
-        }),
-      ],
-    );
-  }
-
-  Widget _buildResumenPago() {
-    final abono = double.tryParse(_abonoController.text) ?? 0;
-    final total = _calcularPrecioTotal() ?? 0;
-
-    return Column(
-      children: [
-        _buildResumenItem('Total Reserva:', '\$${total.toStringAsFixed(2)}'),
-        _buildResumenItem('Abonado:', '\$${abono.toStringAsFixed(2)}'),
-        _buildResumenItem(
-          'Saldo Pendiente:',
-          '\$${_saldoPendiente.toStringAsFixed(2)}',
-          style: TextStyle(
-            color: _saldoPendiente > 0 ? Colors.red : Colors.green,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        if (_metodoPagoSeleccionado != null)
-          _buildResumenItem('Método de pago:', _metodoPagoSeleccionado!),
-        Divider(),
-      ],
-    );
-  }
-
-  Widget _buildResumenItem(String label, String value, {TextStyle? style}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: TextStyle(color: Colors.grey[600])),
-          Text(value,
-              style: style ?? const TextStyle(fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAlojamientoCard({
-    required DocumentSnapshot alojamiento,
-  }) {
-    final data = alojamiento.data() as Map<String, dynamic>;
-    final alojamientoId = alojamiento.id;
-    final isSelected = _alojamientosSeleccionados.containsKey(alojamientoId);
-    final huespedes = isSelected
-        ? _alojamientosSeleccionados[alojamientoId]!['huespedes'] as int
-        : 1;
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      color: isSelected ? Colors.green[50] : null,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(
-          color: isSelected ? Colors.green : Colors.grey[300]!,
-          width: 1,
-        ),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _toggleAlojamientoSeleccionado(alojamiento),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      data['nombre'],
-                      style: const TextStyle(
-                          fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  if (isSelected)
-                    const Icon(Icons.check_circle, color: Colors.green),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Tipo: ${data['tipo']}',
-                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-              ),
-              const SizedBox(height: 8),
-              Text('Capacidad: ${data['capacidad']} personas'),
-              Text(
-                'Precio: \$${data['precio']} por persona/noche',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green[700],
-                ),
-              ),
-              if (data['descripcion'] != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(data['descripcion']),
-                ),
-              if (isSelected)
-                _buildHuespedesCounter(
-                    alojamientoId, huespedes, data['capacidad']),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDateTile({
-    required String label,
-    required DateTime? date,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      leading: Icon(Icons.calendar_today, color: Colors.green[700]),
-      title: Text(label),
-      subtitle: Text(date == null
-          ? 'Seleccionar fecha'
-          : DateFormat('dd/MM/yyyy').format(date)),
-      trailing: const Icon(Icons.arrow_forward_ios),
-      onTap: onTap,
-    );
-  }
-
-  Widget _buildTextFormField({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    TextInputType? keyboardType,
-    String? Function(String?)? validator,
-    void Function(String)? onChanged,
-  }) {
-    return TextFormField(
-      controller: controller,
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
-        prefixIcon: Icon(icon),
-      ),
-      keyboardType: keyboardType,
-      validator: validator,
-      onChanged: onChanged,
-    );
-  }
-
-  Widget _buildActionButton({
-    required String text,
-    required Color color,
-    required VoidCallback? onPressed,
-    required bool isLoading,
-  }) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: color,
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-        ),
-        onPressed: isLoading ? null : onPressed,
-        child: isLoading
-            ? const CircularProgressIndicator(color: Colors.white)
-            : Text(text, style: const TextStyle(fontSize: 18)),
-      ),
-    );
-  }
-
   void _mostrarExito(String mensaje) {
     showDialog(
       context: context,
@@ -1367,7 +1894,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
         title: Row(
           children: [
             Icon(Icons.check_circle, color: Colors.green, size: 28),
-            const SizedBox(width: 10),
+            SizedBox(width: 10),
             Text('Éxito',
                 style: TextStyle(
                     color: Colors.green, fontWeight: FontWeight.bold)),
@@ -1377,7 +1904,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Aceptar"),
+            child: Text("Aceptar"),
           ),
         ],
       ),
@@ -1391,7 +1918,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
         title: Row(
           children: [
             Icon(Icons.error, color: Colors.red, size: 28),
-            const SizedBox(width: 10),
+            SizedBox(width: 10),
             Text('Error',
                 style:
                     TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
@@ -1401,385 +1928,37 @@ class _ReservationScreenState extends State<ReservationScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text("Aceptar"),
+            child: Text("Aceptar"),
           ),
         ],
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final alojamientosFiltrados = _filtrarAlojamientos();
-    final numNoches = _fechaEntrada != null && _fechaSalida != null
-        ? _fechaSalida!.difference(_fechaEntrada!).inDays
-        : 0;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Nueva Reserva',
-            style: TextStyle(fontSize: 28, color: Colors.white)),
-        backgroundColor: Colors.green[700],
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
-      body: _isLoadingAlojamientos && _listaAlojamientosDisponibles.isEmpty
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Sección 1: Datos Personales
-                    Card(
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Datos Personales',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green[700],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            _buildTextFormField(
-                              controller: _nombreController,
-                              label: 'Nombre Completo',
-                              icon: Icons.person,
-                              validator: (value) =>
-                                  value!.isEmpty ? 'Ingrese su nombre' : null,
-                            ),
-                            const SizedBox(height: 16),
-                            _buildTextFormField(
-                              controller: _emailController,
-                              label: 'Correo Electrónico',
-                              icon: Icons.email,
-                              validator: (value) => !value!.contains('@')
-                                  ? 'Ingrese un correo válido'
-                                  : null,
-                            ),
-                            const SizedBox(height: 16),
-                            _buildTextFormField(
-                              controller: _telefonoController,
-                              label: 'Teléfono',
-                              icon: Icons.phone,
-                              validator: (value) => value!.length < 8
-                                  ? 'Mínimo 8 caracteres'
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Sección 2: Detalles de la Reserva
-                    Card(
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Detalles de la Reserva',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green[700],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            _buildTextFormField(
-                              controller: _huespedesController,
-                              label: 'Número Total de Huéspedes',
-                              icon: Icons.people,
-                              keyboardType: TextInputType.number,
-                            ),
-                            const SizedBox(height: 16),
-                            _buildDateTile(
-                              label: 'Fecha de Entrada',
-                              date: _fechaEntrada,
-                              onTap: () => _seleccionarFecha(true),
-                            ),
-                            const Divider(),
-                            _buildDateTile(
-                              label: 'Fecha de Salida',
-                              date: _fechaSalida,
-                              onTap: () => _seleccionarFecha(false),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Sección 3: Tipo de Alojamiento
-                    Card(
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Tipo de Alojamiento',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green[700],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            DropdownButtonFormField<String>(
-                              value: _tipoAlojamientoSeleccionado,
-                              decoration: const InputDecoration(
-                                border: OutlineInputBorder(),
-                                labelText: 'Seleccione un tipo',
-                              ),
-                              items: _tiposAlojamiento.map((tipo) {
-                                return DropdownMenuItem<String>(
-                                  value: tipo,
-                                  child: Text(tipo),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                setState(() {
-                                  _tipoAlojamientoSeleccionado = value;
-                                  _alojamientosSeleccionados.clear();
-                                  _disponibilidadVerificada = false;
-                                  _precioTotal = _calcularPrecioTotal();
-                                  _calcularSaldoPendiente();
-                                });
-                              },
-                              validator: (value) =>
-                                  value == null ? 'Seleccione un tipo' : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Sección 4: Alojamientos Disponibles
-                    if (_tipoAlojamientoSeleccionado != null) ...[
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Text(
-                          'Alojamientos Disponibles ($_tipoAlojamientoSeleccionado)',
-                          style: const TextStyle(
-                              fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      if (alojamientosFiltrados.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text(
-                              'No hay alojamientos disponibles de este tipo'),
-                        )
-                      else
-                        ...alojamientosFiltrados.map((alojamiento) {
-                          return _buildAlojamientoCard(
-                            alojamiento: alojamiento,
-                          );
-                        }),
-                      const SizedBox(height: 20),
-
-                      // Resumen de alojamientos seleccionados
-                      if (_alojamientosSeleccionados.isNotEmpty) ...[
-                        Text(
-                          'Alojamientos seleccionados: ${_alojamientosSeleccionados.length}/10',
-                          style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue),
-                        ),
-                        const SizedBox(height: 10),
-                        ..._alojamientosSeleccionados.entries.map((entry) {
-                          final alojamiento =
-                              entry.value['doc'] as DocumentSnapshot;
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: Text(
-                              '- ${alojamiento['nombre']} (${entry.value['huespedes']} huéspedes)',
-                              style: TextStyle(
-                                  fontSize: 16, color: Colors.grey[700]),
-                            ),
-                          );
-                        }),
-                        const SizedBox(height: 20),
-                      ],
-
-                      if (_alojamientosSeleccionados.isNotEmpty &&
-                          _fechaEntrada != null &&
-                          _fechaSalida != null)
-                        _buildActionButton(
-                          text: 'Verificar Disponibilidad',
-                          color: Colors.blue,
-                          onPressed: _verificarDisponibilidad,
-                          isLoading: _isLoadingDisponibilidad,
-                        ),
-
-                      if (_disponibilidadVerificada)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 16),
-                          child: Card(
-                            color: _todosAlojamientosDisponibles
-                                ? Colors.green[50]
-                                : Colors.red[50],
-                            child: Padding(
-                              padding: const EdgeInsets.all(16),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    _todosAlojamientosDisponibles
-                                        ? Icons.check_circle
-                                        : Icons.error,
-                                    color: _todosAlojamientosDisponibles
-                                        ? Colors.green
-                                        : Colors.red,
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(
-                                      _todosAlojamientosDisponibles
-                                          ? 'Todos los alojamientos están disponibles'
-                                          : 'Uno o más alojamientos no están disponibles',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: _todosAlojamientosDisponibles
-                                            ? Colors.green
-                                            : Colors.red,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-
-                    // Sección 5: Actividades
-                    _buildSeleccionActividades(),
-
-                    // Sección 6: Alimentos
-                    _buildSeleccionAlimentos(),
-
-                    // Sección 7: Pago
-                    if (_precioTotal != null && _precioTotal! > 0) ...[
-                      const SizedBox(height: 20),
-                      _buildSeccionPago(),
-                    ],
-
-                    // Sección 8: Resumen de Reserva
-                    Card(
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Resumen de Reserva',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green[700],
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            if (_alojamientosSeleccionados.isNotEmpty)
-                              _buildResumenAlojamientos(numNoches),
-                            _buildResumenActividades(),
-                            _buildResumenAlimentos(),
-                            _buildResumenPago(),
-                            _buildResumenItem(
-                              'Huéspedes totales:',
-                              _huespedesController.text,
-                            ),
-                            _buildResumenItem(
-                              'Fecha Entrada:',
-                              _fechaEntrada != null
-                                  ? DateFormat('dd/MM/yyyy')
-                                      .format(_fechaEntrada!)
-                                  : 'No seleccionada',
-                            ),
-                            _buildResumenItem(
-                              'Fecha Salida:',
-                              _fechaSalida != null
-                                  ? DateFormat('dd/MM/yyyy')
-                                      .format(_fechaSalida!)
-                                  : 'No seleccionada',
-                            ),
-                            _buildResumenItem(
-                              'Noches:',
-                              numNoches.toString(),
-                            ),
-                            const Divider(),
-                            if (_precioTotal != null)
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  const Text(
-                                    'Precio Total:',
-                                    style:
-                                        TextStyle(fontWeight: FontWeight.bold),
-                                  ),
-                                  Text(
-                                    '\$${_precioTotal!.toStringAsFixed(2)}',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.green[700],
-                                      fontSize: 18,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            else
-                              const Text(
-                                'Complete los datos para ver el precio',
-                                style: TextStyle(color: Colors.grey),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    // Botón de Confirmación
-                    _buildActionButton(
-                      text: 'Confirmar Reserva',
-                      color: Colors.green[700]!,
-                      onPressed:
-                          (_isLoadingReserva || !_todosAlojamientosDisponibles)
-                              ? null
-                              : _crearReserva,
-                      isLoading: _isLoadingReserva,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-    );
+  void _limpiarFormulario() {
+    _nombreController.clear();
+    _emailController.clear();
+    _telefonoController.clear();
+    _huespedesController.text = '1';
+    _abonoController.clear();
+    setState(() {
+      _fechaEntrada = null;
+      _fechaSalida = null;
+      _tipoAlojamientoSeleccionado = null;
+      _alojamientosSeleccionados.clear();
+      _precioTotal = null;
+      _disponibilidadVerificada = false;
+      _todosAlojamientosDisponibles = false;
+      _mostrarActividades = false;
+      _deseaActividades = false;
+      _actividadesSeleccionadas.clear();
+      _actividadesDisponibles.clear();
+      _mostrarAlimentos = false;
+      _deseaAlimentos = false;
+      _alimentosSeleccionados.clear();
+      _alimentosDisponibles.clear();
+      _metodoPagoSeleccionado = null;
+      _saldoPendiente = 0;
+    });
   }
 }
