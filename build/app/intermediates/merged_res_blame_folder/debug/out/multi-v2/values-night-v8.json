@@ -4,7 +4,7 @@
             "outputFile": "com.example.app_reservas.app-mergeDebugResources-33:/values-night-v8/values-night-v8.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\rodri\\OneDrive\\Documentos\\DESARROLLO\\app_reservas\\android\\app\\src\\main\\res\\values-night\\styles.xml",
+                    "source": "C:\\app_reservas\\android\\app\\src\\main\\res\\values-night\\styles.xml",
                     "from": {
                         "startLines": "3,14",
                         "startColumns": "4,4",

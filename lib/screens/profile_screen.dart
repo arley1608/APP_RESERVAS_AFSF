@@ -33,6 +33,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _updateProfile() async {
+    if (nameController.text.trim().isEmpty) {
+      _showErrorDialog("El nombre no puede estar vacío");
+      return;
+    }
+
     setState(() => isLoading = true);
     try {
       User? user = FirebaseAuth.instance.currentUser;
@@ -156,6 +161,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         padding: EdgeInsets.all(20),
         child: Column(
           children: [
+            CircleAvatar(
+              radius: 50,
+              backgroundColor: Colors.green[700],
+              child: Icon(Icons.person, size: 60, color: Colors.white),
+            ),
+            SizedBox(height: 20),
             Card(
               elevation: 4,
               shape: RoundedRectangleBorder(

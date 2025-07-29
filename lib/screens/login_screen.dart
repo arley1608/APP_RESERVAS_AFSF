@@ -36,16 +36,10 @@ class _LoginScreenState extends State<LoginScreen> {
         String? rol = await getUserRole(user.uid);
 
         if (rol == null) {
-          await FirebaseFirestore.instance
-              .collection('usuarios')
-              .doc(user.uid)
-              .set({
-            'nombre': "Administrador",
-            'email': user.email,
-            'rol': "admin"
-          }, SetOptions(merge: true));
-
-          rol = "admin";
+          _mostrarError(
+              "Tu cuenta no está registrada. Contacta a un administrador.");
+          await FirebaseAuth.instance.signOut();
+          return;
         }
 
         if (mounted) {
@@ -56,8 +50,7 @@ class _LoginScreenState extends State<LoginScreen> {
         }
       }
     } catch (e) {
-      _mostrarError(_getFirebaseErrorMessage(
-          e.toString())); // 🔹 Muestra la alerta flotante
+      _mostrarError(_getFirebaseErrorMessage(e.toString()));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -80,7 +73,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // 🔹 Función para mostrar la alerta flotante con ícono de alerta
   void _mostrarError(String mensaje) {
     showDialog(
       context: context,
@@ -90,8 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Row(
             children: [
-              Icon(Icons.error_outline,
-                  color: Colors.red, size: 28), // Ícono de alerta
+              Icon(Icons.error_outline, color: Colors.red, size: 28),
               SizedBox(width: 10),
               Text("Error"),
             ],
@@ -110,7 +101,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  // 🔹 Función para traducir los errores de Firebase a mensajes amigables
   String _getFirebaseErrorMessage(String error) {
     if (error.contains('user-not-found')) {
       return "Este correo no está registrado.";
@@ -131,10 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.green[700]!,
-              Colors.orange[600]!
-            ], // 🔹 Degradado Verde → Naranja
+            colors: [Colors.green[700]!, Colors.orange[600]!],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -145,46 +132,38 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Center(
                 child: SingleChildScrollView(
                   padding: EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Imagen en la parte superior centrada
-                      Image.asset(
-                        "assets/images/logo_colores.png",
-                        height: 220, // Ajusta el tamaño según sea necesario
-                      ),
-                      SizedBox(height: 40),
-
-                      // Título
-                      Text(
-                        "Gestión de Reservas\nAgroFinca San Felipe",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
-                          color:
-                              Colors.white, // 🔹 Texto en blanco para contraste
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: 450),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Image.asset(
+                          "assets/images/logo_colores.png",
+                          height: 220,
                         ),
-                      ),
-                      SizedBox(height: 40),
-
-                      // Tarjeta del formulario
-                      Card(
-                        elevation: 6,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                        SizedBox(height: 40),
+                        Text(
+                          "Gestión de Reservas\nAgroFinca San Felipe",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
-                        child: Padding(
-                          padding: EdgeInsets.all(20),
-                          child: Form(
-                            key: _formKey,
-                            child: Column(
-                              children: [
-                                // Input de Email
-                                SizedBox(
-                                  width:
-                                      MediaQuery.of(context).size.width * 0.5,
-                                  child: TextFormField(
+                        SizedBox(height: 40),
+                        Card(
+                          elevation: 6,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Padding(
+                            padding: EdgeInsets.all(20),
+                            child: Form(
+                              key: _formKey,
+                              child: Column(
+                                children: [
+                                  TextFormField(
                                     controller: emailController,
                                     decoration: InputDecoration(
                                       labelText: "Correo Electrónico",
@@ -199,17 +178,15 @@ class _LoginScreenState extends State<LoginScreen> {
                                       if (value == null || value.isEmpty) {
                                         return "Ingrese su correo electrónico.";
                                       }
+                                      if (!RegExp(r'^[^@]+@[^@]+\.[^@]+')
+                                          .hasMatch(value)) {
+                                        return "El formato del correo no es válido.";
+                                      }
                                       return null;
                                     },
                                   ),
-                                ),
-                                SizedBox(height: 16),
-
-                                // Input de Contraseña
-                                SizedBox(
-                                  width:
-                                      MediaQuery.of(context).size.width * 0.5,
-                                  child: TextFormField(
+                                  SizedBox(height: 16),
+                                  TextFormField(
                                     controller: passwordController,
                                     obscureText: true,
                                     decoration: InputDecoration(
@@ -227,46 +204,42 @@ class _LoginScreenState extends State<LoginScreen> {
                                       return null;
                                     },
                                   ),
-                                ),
-                                SizedBox(height: 20),
-
-                                // Botón de Iniciar Sesión
-                                SizedBox(
-                                  width:
-                                      MediaQuery.of(context).size.width * 0.5,
-                                  height: 45,
-                                  child: ElevatedButton(
-                                    onPressed: login,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.green[700],
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                  SizedBox(height: 20),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    height: 45,
+                                    child: ElevatedButton(
+                                      onPressed: login,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.green[700],
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(12),
+                                        ),
                                       ),
+                                      child: loading
+                                          ? CircularProgressIndicator(
+                                              color: Colors.white)
+                                          : Text(
+                                              "Iniciar Sesión",
+                                              style: TextStyle(
+                                                  fontSize: 18,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white),
+                                            ),
                                     ),
-                                    child: loading
-                                        ? CircularProgressIndicator(
-                                            color: Colors.white)
-                                        : Text(
-                                            "Iniciar Sesión",
-                                            style: TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.white),
-                                          ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-
-            // Copyright en la parte inferior
             Padding(
               padding: EdgeInsets.only(bottom: 25),
               child: Text(

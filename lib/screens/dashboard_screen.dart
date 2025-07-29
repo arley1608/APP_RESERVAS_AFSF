@@ -8,6 +8,8 @@ import 'user_management_screen.dart';
 import 'room_management_screen.dart';
 import 'activity_management_screen.dart'; // Importa la nueva pantalla de actividades
 import 'food_management_screen.dart'; // Importa la nueva pantalla de alimentos
+import 'edit_reservation_screen.dart';
+import 'reservation_management_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   final String rol;
@@ -112,10 +114,22 @@ class DashboardScreen extends StatelessWidget {
                     );
                   }),
                 if (rol == "admin" || rol == "operador")
-                  _buildButton(context, "Editar Reserva", Icons.edit, () {}),
+                  _buildButton(context, "Editar Reserva", Icons.edit, () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => EditReservationScreen()),
+                    );
+                  }),
                 if (rol == "admin" || rol == "recepcionista")
-                  _buildButton(
-                      context, "Gestionar Reservas", Icons.visibility, () {}),
+                  _buildButton(context, "Gestionar Reservas", Icons.visibility,
+                      () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => ReservationManagementScreen()),
+                    );
+                  }),
                 if (rol == "admin")
                   _buildButton(context, "Gestión de Usuarios", Icons.people,
                       () {

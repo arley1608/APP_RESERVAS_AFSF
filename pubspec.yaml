@@ -38,7 +38,8 @@ dependencies:
   intl: ^0.20.2
   table_calendar: ^3.2.0
   cached_network_image: ^3.4.1
-
+  flutter_launcher_icons: ^0.14.3
+  
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -69,6 +70,11 @@ flutter:
   assets:
     - assets/images/logo_colores.png
     - assets/images/fondo_inferior.jpg
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: assets/images/logo_colores.png
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Funciones auxiliares mejoradas
+    function isAdmin() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == "admin";
+    }
+    
+    function isOperador() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.rol == "operador";
+    }
+
+    function isUser(userId) {
+      return request.auth.uid == userId;
+    }
+
+    function isOwner(resource) {
+      return resource.data.usuarioId == request.auth.uid;
+    }
+
+    function isValidReserva() {
+      return request.resource.data.nombre is string &&
+             request.resource.data.nombre != "" &&
+             request.resource.data.email is string &&
+             request.resource.data.email.matches('^[^@]+@[^@]+\\.[^@]+$') &&
+             request.resource.data.telefono is string &&
+             request.resource.data.telefono != "" &&
+             request.resource.data.alojamientoId is string &&
+             request.resource.data.alojamientoNombre is string &&
+             request.resource.data.tipoAlojamiento is string &&
+             request.resource.data.huespedes is number &&
+             request.resource.data.huespedes > 0 &&
+             request.resource.data.fechaEntrada is timestamp &&
+             request.resource.data.fechaSalida is timestamp &&
+             request.resource.data.fechaSalida > request.resource.data.fechaEntrada &&
+             request.resource.data.precioTotal is number &&
+             request.resource.data.estado in ["pendiente", "confirmada"];
+    }
+
+    // Reglas para alojamientos (sin cambios)
+    match /alojamientos/{alojamientoId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null && isAdmin();
+    }
+    
+    // Reglas para actividades (sin cambios)
+    match /actividades/{actividadId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null && isAdmin();
+    }
+    
+    // Reglas para alimentos (sin cambios)
+    match /alimentos/{alimentoId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null && isAdmin();
+    }
+    
+    // Reglas para usuarios (sin cambios)
+    match /usuarios/{userId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && isUser(userId);
+      allow delete: if request.auth != null && isAdmin();
+    }
+
+    // REGLAS MODIFICADAS PARA RESERVAS - VERSIÓN CORREGIDA
+    match /reservas/{reservaId} {
+      // Permitir lectura si:
+      // - Es admin/operador O
+      // - Es el dueño de la reserva
+      allow read: if request.auth != null && 
+                  (isAdmin() || isOperador() || isOwner(resource));
+      
+      // Permitir creación si:
+      // - Es admin/operador (puede crear para cualquier usuario) O
+      // - Es usuario normal creando para sí mismo (con datos válidos)
+      allow create: if request.auth != null &&
+                   ((isAdmin() || isOperador()) || 
+                    (request.resource.data.usuarioId == request.auth.uid)) &&
+                   isValidReserva();
+      
+      // Permitir actualización si:
+      // - Es admin (puede modificar cualquier campo) O
+      // - Es operador (solo campos específicos) O
+      // - Es el dueño y solo cambia el estado a "cancelada"
+      allow update: if request.auth != null && 
+                   (isAdmin() ||
+                    (isOperador() &&
+                     request.resource.data.diff(resource.data).affectedKeys()
+                      .hasOnly(["estado", "metodoPago", "abono"])) ||
+                    (isOwner(resource) &&
+                     request.resource.data.estado == "cancelada" &&
+                     resource.data.estado != "cancelada" &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(["estado"])));
+      
+      // Solo admins pueden eliminar reservas
+      allow delete: if request.auth != null && isAdmin();
+    }
+    
+    // Reglas para facturas (modificadas para operadores)
+    match /reservas/{reservaId}/facturas/{facturaId} {
+      allow read: if request.auth != null && 
+                  (isAdmin() || isOperador() || 
+                   get(/databases/$(database)/documents/reservas/$(reservaId)).data.usuarioId == request.auth.uid);
+      allow create, update, delete: if request.auth != null && (isAdmin() || isOperador());
+    }
+  }
+}
