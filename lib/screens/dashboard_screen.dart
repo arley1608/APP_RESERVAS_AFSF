@@ -80,13 +80,13 @@ class DashboardScreen extends StatelessWidget {
             height: double.infinity,
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [Colors.green[700]!, Colors.white],
+                colors: [Colors.green[700]!, Colors.orange],
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               ),
             ),
           ),
-          Positioned(
+          /*Positioned(
             bottom: 0,
             left: 0,
             right: 0,
@@ -94,7 +94,7 @@ class DashboardScreen extends StatelessWidget {
               "assets/images/fondo_inferior.jpg",
               fit: BoxFit.cover,
             ),
-          ),
+          ),*/
           Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -114,14 +114,14 @@ class DashboardScreen extends StatelessWidget {
                     );
                   }),
                 if (rol == "admin" || rol == "operador")
-                  _buildButton(context, "Editar Reserva", Icons.edit, () {
+                  _buildButton(context, "Editar Reservas", Icons.edit, () {
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                           builder: (context) => EditReservationScreen()),
                     );
                   }),
-                if (rol == "admin" || rol == "recepcionista")
+                /*if (rol == "admin" || rol == "recepcionista")
                   _buildButton(context, "Gestionar Reservas", Icons.visibility,
                       () {
                     Navigator.push(
@@ -129,7 +129,7 @@ class DashboardScreen extends StatelessWidget {
                       MaterialPageRoute(
                           builder: (context) => ReservationManagementScreen()),
                     );
-                  }),
+                  }),*/
                 if (rol == "admin")
                   _buildButton(context, "Gestión de Usuarios", Icons.people,
                       () {

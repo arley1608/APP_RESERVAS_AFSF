@@ -552,10 +552,14 @@ class _ReservationScreenState extends State<ReservationScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Nueva Reserva',
-            style: TextStyle(fontSize: 28, color: Colors.white)),
+            style: TextStyle(
+                fontSize: 28,
+                color: Colors.white,
+                fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          icon: const Icon(Icons.arrow_back_ios_new,
+              size: 35, color: Colors.white),
           onPressed: () => Navigator.pop(context),
         ),
       ),
