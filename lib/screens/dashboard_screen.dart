@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'login_screen.dart';
 import 'profile_screen.dart';
 import 'reservation_screen.dart';
 import 'user_management_screen.dart';
 import 'room_management_screen.dart';
-import 'activity_management_screen.dart'; // Importa la nueva pantalla de actividades
-import 'food_management_screen.dart'; // Importa la nueva pantalla de alimentos
+import 'activity_management_screen.dart';
+import 'food_management_screen.dart';
 import 'edit_reservation_screen.dart';
 import 'reservation_management_screen.dart';
+import '../services/firestore_service.dart';
 
 class DashboardScreen extends StatelessWidget {
   final String rol;
@@ -18,6 +18,9 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final firestoreService = FirestoreService();
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.green[700],
@@ -31,11 +34,8 @@ class DashboardScreen extends StatelessWidget {
             );
           },
         ),
-        title: FutureBuilder<DocumentSnapshot>(
-          future: FirebaseFirestore.instance
-              .collection('usuarios')
-              .doc(FirebaseAuth.instance.currentUser!.uid)
-              .get(),
+        title: FutureBuilder<Map<String, dynamic>?>(
+          future: firestoreService.getUsuario(uid),
           builder: (context, snapshot) {
             if (!snapshot.hasData ||
                 snapshot.connectionState == ConnectionState.waiting) {
@@ -45,15 +45,8 @@ class DashboardScreen extends StatelessWidget {
                       fontSize: 35,
                       fontWeight: FontWeight.bold));
             }
-            if (snapshot.data == null || snapshot.data!.data() == null) {
-              return Text("Bienvenido",
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 35,
-                      fontWeight: FontWeight.bold));
-            }
-            final data = snapshot.data!.data() as Map<String, dynamic>;
-            return Text("Bienvenido, ${data['nombre'] ?? 'Usuario'}",
+            final nombre = snapshot.data?['nombre'] ?? 'Usuario';
+            return Text("Bienvenido, $nombre",
                 style: TextStyle(
                     fontSize: 35,
                     fontWeight: FontWeight.bold,
@@ -86,99 +79,109 @@ class DashboardScreen extends StatelessWidget {
               ),
             ),
           ),
-          /*Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: Image.asset(
-              "assets/images/fondo_inferior.jpg",
-              fit: BoxFit.cover,
-            ),
-          ),*/
           Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Image.asset(
-                  "assets/images/logo_colores.png",
-                  height: 220,
-                ),
-                SizedBox(height: 40),
-                if (rol == "admin" || rol == "operador")
-                  _buildButton(context, "Nueva Reserva", Icons.add, () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => ReservationScreen()),
-                    );
-                  }),
-                if (rol == "admin" || rol == "operador")
-                  _buildButton(context, "Editar Reservas", Icons.edit, () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => EditReservationScreen()),
-                    );
-                  }),
-                /*if (rol == "admin" || rol == "recepcionista")
-                  _buildButton(context, "Gestionar Reservas", Icons.visibility,
-                      () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => ReservationManagementScreen()),
-                    );
-                  }),*/
-                if (rol == "admin")
-                  _buildButton(context, "Gestión de Usuarios", Icons.people,
-                      () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => UserManagementScreen()),
-                    );
-                  }),
-                if (rol == "admin")
-                  _buildButton(
-                      context, "Gestión de Alojamientos", Icons.business, () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => RoomManagementScreen()),
-                    );
-                  }),
-                if (rol == "admin")
-                  _buildButton(
-                      context, "Gestión de Actividades", Icons.assignment, () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => ActivityManagementScreen()),
-                    );
-                  }),
-                if (rol == "admin")
-                  _buildButton(
-                      context, "Gestión de Alimentos", Icons.restaurant, () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => FoodManagementScreen()),
-                    );
-                  }),
-                SizedBox(height: 20),
-                Padding(
-                  padding: EdgeInsets.only(bottom: 16),
-                  child: Text(
-                    "Versión 1.0.0",
-                    style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white70,
-                      fontWeight: FontWeight.bold,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  SizedBox(height: 20),
+                  Image.asset(
+                    "assets/images/logo_colores.png",
+                    height: 220,
+                  ),
+                  SizedBox(height: 40),
+
+                  // Admin y operador pueden crear reservas
+                  if (rol == "admin" || rol == "operador")
+                    _buildButton(context, "Nueva Reserva", Icons.add, () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ReservationScreen()),
+                      );
+                    }),
+
+                  // Admin y operador pueden editar sus reservas
+                  if (rol == "admin" || rol == "operador")
+                    _buildButton(context, "Editar Reservas", Icons.edit, () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => EditReservationScreen(
+                                  rol: rol,
+                                  uid: uid,
+                                )),
+                      );
+                    }),
+
+                  // Admin y recepcionista pueden gestionar todas las reservas
+                  if (rol == "admin" || rol == "recepcionista")
+                    _buildButton(
+                        context, "Gestionar Reservas", Icons.dashboard, () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) =>
+                                ReservationManagementScreen()),
+                      );
+                    }),
+
+                  // Solo admin
+                  if (rol == "admin")
+                    _buildButton(
+                        context, "Gestión de Usuarios", Icons.people, () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => UserManagementScreen()),
+                      );
+                    }),
+
+                  if (rol == "admin")
+                    _buildButton(context, "Gestión de Alojamientos",
+                        Icons.business, () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => RoomManagementScreen()),
+                      );
+                    }),
+
+                  if (rol == "admin")
+                    _buildButton(context, "Gestión de Actividades",
+                        Icons.assignment, () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => ActivityManagementScreen()),
+                      );
+                    }),
+
+                  if (rol == "admin")
+                    _buildButton(
+                        context, "Gestión de Alimentos", Icons.restaurant, () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => FoodManagementScreen()),
+                      );
+                    }),
+
+                  SizedBox(height: 20),
+                  Padding(
+                    padding: EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      "Versión 1.0.0",
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.white70,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],

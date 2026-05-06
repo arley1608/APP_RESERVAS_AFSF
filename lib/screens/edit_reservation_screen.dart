@@ -1,16 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import '../services/firestore_service.dart';
+import 'reservation_screen.dart';
 
 class EditReservationScreen extends StatefulWidget {
-  const EditReservationScreen({Key? key}) : super(key: key);
+  final String rol;
+  final String uid;
+
+  const EditReservationScreen({
+    Key? key,
+    required this.rol,
+    required this.uid,
+  }) : super(key: key);
 
   @override
-  _EditReservationScreen createState() => _EditReservationScreen();
+  _EditReservationScreenState createState() => _EditReservationScreenState();
 }
 
-class _EditReservationScreen extends State<EditReservationScreen> {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+class _EditReservationScreenState extends State<EditReservationScreen> {
+  final FirestoreService _firestoreService = FirestoreService();
   late Stream<QuerySnapshot> _reservationsStream;
   bool _isLoading = true;
   String? _errorMessage;
@@ -32,19 +41,27 @@ class _EditReservationScreen extends State<EditReservationScreen> {
   }
 
   void _onSearchChanged() {
-    setState(() {
-      _searchQuery = _searchController.text.toLowerCase();
-    });
+    setState(() => _searchQuery = _searchController.text.toLowerCase());
   }
 
-  Future<void> _loadReservations() async {
+  void _loadReservations() {
     try {
       setState(() => _isLoading = true);
 
-      _reservationsStream = _firestore
-          .collection('reservas')
-          .orderBy('fechaEntrada', descending: false)
-          .snapshots();
+      if (widget.rol == 'operador') {
+        _reservationsStream = FirebaseFirestore.instance
+            .collection('reservas')
+            .where('usuarioId', isEqualTo: widget.uid)
+            .where('estado', whereIn: ['pendiente', 'confirmada'])
+            .orderBy('fechaEntrada', descending: false)
+            .snapshots();
+      } else {
+        _reservationsStream = FirebaseFirestore.instance
+            .collection('reservas')
+            .where('estado', whereIn: ['pendiente', 'confirmada'])
+            .orderBy('fechaEntrada', descending: false)
+            .snapshots();
+      }
 
       setState(() {
         _isLoading = false;
@@ -55,7 +72,6 @@ class _EditReservationScreen extends State<EditReservationScreen> {
         _isLoading = false;
         _errorMessage = 'Error al cargar reservas: ${e.toString()}';
       });
-      _showErrorDialog('Error al cargar reservas', e.toString());
     }
   }
 
@@ -63,7 +79,13 @@ class _EditReservationScreen extends State<EditReservationScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Cancelar Reserva'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.warning, color: Colors.orange, size: 28),
+          SizedBox(width: 10),
+          Text('Cancelar Reserva',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
         content: const Text('¿Estás seguro que deseas cancelar esta reserva?'),
         actions: [
           TextButton(
@@ -81,83 +103,38 @@ class _EditReservationScreen extends State<EditReservationScreen> {
 
     if (confirmed == true) {
       try {
-        await _firestore.collection('reservas').doc(reservationId).update({
-          'estado': 'cancelada',
-          'actualizadoEn': FieldValue.serverTimestamp(),
-        });
-        _showSuccessDialog(
-            'Reserva cancelada', 'La reserva ha sido cancelada exitosamente.');
+        await _firestoreService
+            .updateReserva(reservationId, {'estado': 'cancelada'});
+        _showSuccessDialog('Reserva cancelada exitosamente');
       } catch (e) {
-        _showErrorDialog(
-            'Error al cancelar', 'No se pudo cancelar la reserva: $e');
+        _showErrorDialog('No se pudo cancelar la reserva: $e');
       }
     }
   }
 
-  Future<void> _editReservation(
-      String reservationId, Map<String, dynamic> data) async {
-    // Aquí puedes implementar la lógica para editar la reserva
-    // Por ejemplo, navegar a una pantalla de edición con los datos de la reserva
-    _showSuccessDialog('Editar Reserva',
-        'Función de edición para reserva #${reservationId.substring(0, 8)}');
-  }
-
-  Future<void> _showReservationDetails(
-      String reservationId, Map<String, dynamic> data) async {
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Detalles de Reserva #${reservationId.substring(0, 8)}'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildDetailItem('Estado:', data['estado']?.toString() ?? 'N/A',
-                  _getStatusColor(data['estado']?.toString() ?? 'pendiente')),
-              _buildDetailItem('Cliente:', data['nombre'] ?? 'N/A'),
-              _buildDetailItem('Email:', data['email'] ?? 'N/A'),
-              _buildDetailItem('Teléfono:', data['telefono'] ?? 'N/A'),
-              _buildDetailItem('Entrada:', _formatDate(data['fechaEntrada'])),
-              _buildDetailItem('Salida:', _formatDate(data['fechaSalida'])),
-              _buildDetailItem(
-                  'Huéspedes:', data['huespedesTotales']?.toString() ?? 'N/A'),
-              _buildDetailItem('Total:',
-                  '\$${data['precioTotal']?.toStringAsFixed(2) ?? '0.00'}'),
-              _buildDetailItem(
-                  'Abono:', '\$${data['abono']?.toStringAsFixed(2) ?? '0.00'}'),
-              _buildDetailItem('Saldo Pendiente:',
-                  '\$${(data['precioTotal'] - (data['abono'] ?? 0)).toStringAsFixed(2)}'),
-              const SizedBox(height: 16),
-              if (data['alojamientos'] != null)
-                ..._buildAccommodationDetails(data['alojamientos']),
-              if (data['actividades'] != null)
-                ..._buildActivityDetails(data['actividades']),
-              if (data['alimentos'] != null)
-                ..._buildFoodDetails(data['alimentos']),
-            ],
-          ),
+  // Navega a ReservationScreen en modo edición
+  void _editReservation(String reservationId, Map<String, dynamic> data) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ReservationScreen(
+          reservationId: reservationId,
+          reservationData: data,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cerrar'),
-          ),
-        ],
       ),
     );
   }
 
-  Future<void> _showSuccessDialog(String title, String message) async {
-    await showDialog(
+  void _showSuccessDialog(String message) {
+    showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.green),
-            const SizedBox(width: 10),
-            Text(title),
-          ],
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.check_circle, color: Colors.green, size: 28),
+          SizedBox(width: 10),
+          Text('Éxito', style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
         content: Text(message),
         actions: [
           TextButton(
@@ -167,130 +144,59 @@ class _EditReservationScreen extends State<EditReservationScreen> {
         ],
       ),
     );
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.error, color: Colors.red, size: 28),
+          SizedBox(width: 10),
+          Text('Error', style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Aceptar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'confirmada':
+        return Colors.green;
+      case 'cancelada':
+        return Colors.red;
+      case 'completada':
+        return Colors.blue;
+      default:
+        return Colors.orange;
+    }
   }
 
   String _formatDate(dynamic timestamp) {
     if (timestamp == null) return 'N/A';
     if (timestamp is Timestamp) {
-      return DateFormat('dd/MM/yyyy HH:mm').format(timestamp.toDate());
+      return DateFormat('dd/MM/yyyy').format(timestamp.toDate());
     }
     return 'N/A';
-  }
-
-  List<Widget> _buildAccommodationDetails(List<dynamic> accommodations) {
-    return [
-      const Divider(),
-      const Text('Alojamientos:',
-          style: TextStyle(fontWeight: FontWeight.bold)),
-      ...accommodations.map((acc) => Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                    '- ${acc['alojamientoNombre']} (${acc['tipoAlojamiento']})'),
-                Text('  Huéspedes: ${acc['huespedes']}'),
-                Text(
-                    '  Precio: \$${acc['precioPorAlojamiento']?.toStringAsFixed(2) ?? '0.00'}'),
-              ],
-            ),
-          )),
-    ];
-  }
-
-  List<Widget> _buildActivityDetails(List<dynamic> activities) {
-    return [
-      const Divider(),
-      const Text('Actividades:', style: TextStyle(fontWeight: FontWeight.bold)),
-      ...activities.map((act) => Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('- ${act['nombre']} (x${act['cantidad']})'),
-                Text(
-                    '  Precio: \$${act['precio']?.toStringAsFixed(2) ?? '0.00'}'),
-                Text(
-                    '  Subtotal: \$${act['subtotal']?.toStringAsFixed(2) ?? '0.00'}'),
-              ],
-            ),
-          )),
-    ];
-  }
-
-  List<Widget> _buildFoodDetails(List<dynamic> foods) {
-    return [
-      const Divider(),
-      const Text('Alimentos:', style: TextStyle(fontWeight: FontWeight.bold)),
-      ...foods.map((food) => Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('- ${food['nombre']} (x${food['cantidad']})'),
-                Text(
-                    '  Precio: \$${food['precio']?.toStringAsFixed(2) ?? '0.00'}'),
-                Text(
-                    '  Subtotal: \$${food['subtotal']?.toStringAsFixed(2) ?? '0.00'}'),
-              ],
-            ),
-          )),
-    ];
-  }
-
-  Widget _buildDetailItem(String label, String value, [Color? color]) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value,
-              style: color != null ? TextStyle(color: color) : null,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showErrorDialog(String title, String message) async {
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.red),
-            const SizedBox(width: 10),
-            Text(title),
-          ],
-        ),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Aceptar'),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Editar Reservas',
-            style: TextStyle(
-                fontSize: 28,
-                color: Colors.white,
-                fontWeight: FontWeight.bold)),
+        title: Text(
+          widget.rol == 'operador' ? 'Mis Reservas' : 'Editar Reservas',
+          style: TextStyle(
+              fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         backgroundColor: Colors.green[700],
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_new,
@@ -305,11 +211,10 @@ class _EditReservationScreen extends State<EditReservationScreen> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                labelText: 'Buscar reservas',
+                labelText: 'Buscar por nombre, email o teléfono',
                 prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               ),
             ),
           ),
@@ -325,13 +230,13 @@ class _EditReservationScreen extends State<EditReservationScreen> {
                             return Center(
                                 child: Text('Error: ${snapshot.error}'));
                           }
-
                           if (!snapshot.hasData) {
                             return const Center(
                                 child: CircularProgressIndicator());
                           }
 
-                          final reservations = snapshot.data!.docs.where((doc) {
+                          final reservations =
+                              snapshot.data!.docs.where((doc) {
                             final data = doc.data() as Map<String, dynamic>;
                             return _searchQuery.isEmpty ||
                                 (data['nombre']
@@ -348,17 +253,32 @@ class _EditReservationScreen extends State<EditReservationScreen> {
                                         ?.toString()
                                         .toLowerCase()
                                         .contains(_searchQuery) ??
-                                    false) ||
-                                doc.id.toLowerCase().contains(_searchQuery);
+                                    false);
                           }).toList();
 
                           if (reservations.isEmpty) {
-                            return const Center(
-                                child: Text('No se encontraron reservas'));
+                            return Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.search_off,
+                                      size: 64, color: Colors.grey),
+                                  SizedBox(height: 16),
+                                  Text(
+                                    widget.rol == 'operador'
+                                        ? 'No tienes reservas activas'
+                                        : 'No se encontraron reservas',
+                                    style: TextStyle(
+                                        fontSize: 18, color: Colors.grey),
+                                  ),
+                                ],
+                              ),
+                            );
                           }
 
                           return ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 16),
                             itemCount: reservations.length,
                             itemBuilder: (context, index) {
                               final reservation = reservations[index];
@@ -382,138 +302,104 @@ class _EditReservationScreen extends State<EditReservationScreen> {
     final fechaSalida = (data['fechaSalida'] as Timestamp).toDate();
     final estado = data['estado']?.toString().toLowerCase() ?? 'pendiente';
     final noches = fechaSalida.difference(fechaEntrada).inDays;
-    final total = data['precioTotal'] ?? 0;
-    final abono = data['abono'] ?? 0;
+    final total = (data['precioTotal'] ?? 0).toDouble();
+    final abono = (data['abono'] ?? 0).toDouble();
     final saldo = total - abono;
     final isCanceled = estado == 'cancelada';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       elevation: 4,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _showReservationDetails(reservationId, data),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Reserva #${reservationId.substring(0, 8)}',
-                    style: TextStyle(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Reserva #${reservationId.substring(0, 8)}',
+                  style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
-                      color: Colors.green[700],
-                    ),
-                  ),
-                  Chip(
-                    label: Text(
-                      estado.toUpperCase(),
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                    ),
-                    backgroundColor: _getStatusColor(estado),
-                  ),
-                ],
-              ),
-              const Divider(),
-              _buildInfoRow('Cliente', data['nombre'] ?? 'No especificado'),
-              _buildInfoRow('Contacto',
-                  data['email'] ?? data['telefono'] ?? 'Sin contacto'),
-              _buildInfoRow(
-                  'Entrada', DateFormat('dd/MM/yyyy').format(fechaEntrada)),
-              _buildInfoRow(
-                  'Salida', DateFormat('dd/MM/yyyy').format(fechaSalida)),
-              _buildInfoRow('Noches', noches.toString()),
-              _buildInfoRow('Total', '\$${total.toStringAsFixed(2)}'),
-              if (abono > 0)
-                _buildInfoRow('Abono', '\$${abono.toStringAsFixed(2)}'),
-              _buildInfoRow(
-                'Saldo',
-                '\$${saldo.toStringAsFixed(2)}',
-                style: TextStyle(
-                  color: saldo > 0 ? Colors.red : Colors.green,
-                  fontWeight: FontWeight.bold,
+                      color: Colors.green[700]),
                 ),
+                Chip(
+                  label: Text(estado.toUpperCase(),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 12)),
+                  backgroundColor: _getStatusColor(estado),
+                ),
+              ],
+            ),
+            const Divider(),
+            _buildInfoRow('Cliente', data['nombre'] ?? 'N/A'),
+            _buildInfoRow('Teléfono', data['telefono'] ?? 'N/A'),
+            _buildInfoRow('Entrada', _formatDate(data['fechaEntrada'])),
+            _buildInfoRow('Salida', _formatDate(data['fechaSalida'])),
+            _buildInfoRow('Noches', '$noches'),
+            _buildInfoRow('Total', '\$${total.toStringAsFixed(2)}'),
+            _buildInfoRow('Abono', '\$${abono.toStringAsFixed(2)}'),
+            _buildInfoRow(
+              'Saldo',
+              '\$${saldo.toStringAsFixed(2)}',
+              style: TextStyle(
+                color: saldo > 0 ? Colors.red : Colors.green,
+                fontWeight: FontWeight.bold,
               ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.edit, size: 20),
-                      label: const Text('EDITAR RESERVA'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.blue,
-                        side: const BorderSide(color: Colors.blue),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: () => _editReservation(reservationId, data),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.edit, size: 20),
+                    label: const Text('EDITAR'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.blue,
+                      side: const BorderSide(color: Colors.blue),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
+                    onPressed: isCanceled
+                        ? null
+                        : () => _editReservation(reservationId, data),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.cancel, size: 20),
-                      label: const Text('CANCELAR RESERVA'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isCanceled ? Colors.grey : Colors.red,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: isCanceled
-                          ? null
-                          : () => _cancelReservation(reservationId),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.cancel, size: 20),
+                    label: const Text('CANCELAR'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isCanceled ? Colors.grey : Colors.red,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
+                    onPressed: isCanceled
+                        ? null
+                        : () => _cancelReservation(reservationId),
                   ),
-                ],
-              ),
-            ],
-          ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'confirmada':
-        return Colors.green;
-      case 'cancelada':
-        return Colors.red;
-      case 'completada':
-        return Colors.blue;
-      case 'pendiente':
-      default:
-        return Colors.orange;
-    }
-  }
-
   Widget _buildInfoRow(String label, String value, {TextStyle? style}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            '$label:',
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 14,
-            ),
-          ),
-          Text(
-            value,
-            style: style ??
-                const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                ),
-          ),
+          Text('$label:',
+              style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+          Text(value,
+              style: style ??
+                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         ],
       ),
     );

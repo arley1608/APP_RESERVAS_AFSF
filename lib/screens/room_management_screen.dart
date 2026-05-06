@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_service.dart';
 
 class RoomManagementScreen extends StatefulWidget {
   @override
@@ -7,6 +8,7 @@ class RoomManagementScreen extends StatefulWidget {
 }
 
 class _RoomManagementScreenState extends State<RoomManagementScreen> {
+  final FirestoreService _service = FirestoreService();
   final TextEditingController nombreController = TextEditingController();
   final TextEditingController precioController = TextEditingController();
   final TextEditingController capacidadController = TextEditingController();
@@ -24,23 +26,11 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     "Hamaca",
   ];
 
-  void _showSuccessDialog(String message) {
-    _showDialog(
-      title: "Éxito",
-      message: message,
-      icon: Icons.check_circle,
-      iconColor: Colors.green,
-    );
-  }
+  void _showSuccessDialog(String message) => _showDialog(
+      title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
 
-  void _showErrorDialog(String message) {
-    _showDialog(
-      title: "Error",
-      message: message,
-      icon: Icons.error,
-      iconColor: Colors.red,
-    );
-  }
+  void _showErrorDialog(String message) => _showDialog(
+      title: "Error", message: message, icon: Icons.error, iconColor: Colors.red);
 
   void _showDialog({
     required String title,
@@ -50,26 +40,21 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
   }) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(icon, color: iconColor, size: 28),
-              SizedBox(width: 10),
-              Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(icon, color: iconColor, size: 28),
+          SizedBox(width: 10),
+          Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(message, style: TextStyle(fontSize: 18)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text("Aceptar"),
           ),
-          content: Text(message, style: TextStyle(fontSize: 18)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text("Aceptar"),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -78,14 +63,11 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
       _showErrorDialog("El nombre es requerido");
       return;
     }
-
-    final precio =
-        double.tryParse(precioController.text.replaceAll(',', '.')) ?? 0;
+    final precio = double.tryParse(precioController.text.replaceAll(',', '.')) ?? 0;
     if (precio <= 0) {
       _showErrorDialog("Ingrese un precio válido mayor a cero");
       return;
     }
-
     final capacidad = int.tryParse(capacidadController.text.trim()) ?? 0;
     if (capacidad <= 0) {
       _showErrorDialog("La capacidad debe ser mayor a 0");
@@ -93,29 +75,21 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     }
 
     try {
-      final alojamientoData = {
+      final data = {
         'nombre': nombreController.text.trim(),
         'tipo': selectedTipo,
         'precio': precio,
         'capacidad': capacidad,
         'descripcion': descripcionController.text.trim(),
-        'updatedAt': FieldValue.serverTimestamp(),
       };
 
       if (editingId == null) {
-        alojamientoData['createdAt'] = FieldValue.serverTimestamp();
-        await FirebaseFirestore.instance
-            .collection('alojamientos')
-            .add(alojamientoData);
+        await _service.addAlojamiento(data);
         _showSuccessDialog("Alojamiento creado correctamente");
       } else {
-        await FirebaseFirestore.instance
-            .collection('alojamientos')
-            .doc(editingId)
-            .update(alojamientoData);
+        await _service.updateAlojamiento(editingId!, data);
         _showSuccessDialog("Alojamiento actualizado correctamente");
       }
-
       _resetForm();
     } catch (e) {
       _showErrorDialog("No se pudo guardar el alojamiento: ${e.toString()}");
@@ -127,21 +101,15 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.warning, color: Colors.orange, size: 28),
-            SizedBox(width: 10),
-            Text("Confirmar eliminación",
-                style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
+        title: Row(children: [
+          Icon(Icons.warning, color: Colors.orange, size: 28),
+          SizedBox(width: 10),
+          Text("Confirmar eliminación", style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
         content: Text("¿Estás seguro de eliminar este alojamiento?",
             style: TextStyle(fontSize: 18)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text("Cancelar"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Cancelar")),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text("Eliminar", style: TextStyle(color: Colors.red)),
@@ -152,10 +120,7 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
 
     if (confirm == true) {
       try {
-        await FirebaseFirestore.instance
-            .collection('alojamientos')
-            .doc(id)
-            .delete();
+        await _service.deleteAlojamiento(id);
         _showSuccessDialog("Alojamiento eliminado correctamente");
       } catch (e) {
         _showErrorDialog("No se pudo eliminar: ${e.toString()}");
@@ -190,10 +155,7 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text("Gestión de Alojamientos",
-            style: TextStyle(
-                fontSize: 28,
-                color: Colors.white,
-                fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
           icon: Icon(Icons.arrow_back_ios_new, size: 35, color: Colors.white),
@@ -275,9 +237,7 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
                     minimumSize: Size(double.infinity, 50),
                   ),
                   child: Text(
-                    editingId == null
-                        ? "Guardar Alojamiento"
-                        : "Actualizar Alojamiento",
+                    editingId == null ? "Guardar Alojamiento" : "Actualizar Alojamiento",
                     style: TextStyle(fontSize: 18),
                   ),
                 ),
@@ -286,10 +246,7 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('alojamientos')
-                  .orderBy('nombre')
-                  .snapshots(),
+              stream: _service.getAlojamientos(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator());
@@ -297,13 +254,10 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
                 if (snapshot.hasError) {
                   return Center(child: Text("Error al cargar los datos"));
                 }
-
                 final rooms = snapshot.data?.docs ?? [];
-
                 if (rooms.isEmpty) {
                   return Center(child: Text("No hay alojamientos registrados"));
                 }
-
                 return ListView.builder(
                   itemCount: rooms.length,
                   itemBuilder: (context, index) {
@@ -312,11 +266,9 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
                     return Card(
                       margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       child: ListTile(
-                        leading:
-                            Icon(Icons.room, size: 40, color: Colors.green),
+                        leading: Icon(Icons.room, size: 40, color: Colors.green),
                         title: Text("${data['tipo']} - ${data['nombre']}",
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 18)),
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                         subtitle: Text(
                             "Capacidad: ${data['capacidad']}\nPrecio: \$${data['precio']}\n${data['descripcion']}",
                             style: TextStyle(fontSize: 16)),
@@ -325,8 +277,7 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
                           children: [
                             IconButton(
                               icon: Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () =>
-                                  _loadAlojamientoForEdit(data, doc.id),
+                              onPressed: () => _loadAlojamientoForEdit(data, doc.id),
                             ),
                             IconButton(
                               icon: Icon(Icons.delete, color: Colors.red),

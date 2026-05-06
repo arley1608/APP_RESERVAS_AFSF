@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dashboard_screen.dart';
+import '../services/user_service.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -12,6 +13,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  final UserService _userService = UserService();
   bool loading = false;
 
   @override
@@ -33,7 +35,24 @@ class _LoginScreenState extends State<LoginScreen> {
 
       User? user = userCredential.user;
       if (user != null) {
-        String? rol = await getUserRole(user.uid);
+        // Verificar que el usuario esté activo
+        final userDoc = await FirebaseFirestore.instance
+            .collection('usuarios')
+            .doc(user.uid)
+            .get();
+
+        if (userDoc.exists) {
+          final userData = userDoc.data() as Map<String, dynamic>;
+          if (userData['activo'] == false) {
+            _mostrarError(
+                "Tu cuenta ha sido desactivada. Contacta al administrador.");
+            await FirebaseAuth.instance.signOut();
+            return;
+          }
+        }
+
+        // Obtener rol
+        String? rol = await _userService.getUserRole(user.uid);
 
         if (rol == null) {
           _mostrarError(
@@ -45,7 +64,7 @@ class _LoginScreenState extends State<LoginScreen> {
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => DashboardScreen(rol: rol!)),
+            MaterialPageRoute(builder: (context) => DashboardScreen(rol: rol)),
           );
         }
       }
@@ -53,23 +72,6 @@ class _LoginScreenState extends State<LoginScreen> {
       _mostrarError(_getFirebaseErrorMessage(e.toString()));
     } finally {
       if (mounted) setState(() => loading = false);
-    }
-  }
-
-  Future<String?> getUserRole(String uid) async {
-    try {
-      DocumentSnapshot snapshot = await FirebaseFirestore.instance
-          .collection('usuarios')
-          .doc(uid)
-          .get();
-      if (snapshot.exists) {
-        final data = snapshot.data() as Map<String, dynamic>?;
-        return data?['rol'];
-      }
-      return null;
-    } catch (e) {
-      print("❌ Error al obtener el rol del usuario: $e");
-      return null;
     }
   }
 
@@ -194,8 +196,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                       border: OutlineInputBorder(
                                         borderRadius: BorderRadius.circular(12),
                                       ),
-                                      prefixIcon:
-                                          Icon(Icons.lock, color: Colors.green),
+                                      prefixIcon: Icon(Icons.lock,
+                                          color: Colors.green),
                                     ),
                                     validator: (value) {
                                       if (value == null || value.length < 6) {
@@ -209,7 +211,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                     width: double.infinity,
                                     height: 45,
                                     child: ElevatedButton(
-                                      onPressed: login,
+                                      onPressed: loading ? null : login,
                                       style: ElevatedButton.styleFrom(
                                         backgroundColor: Colors.green[700],
                                         shape: RoundedRectangleBorder(

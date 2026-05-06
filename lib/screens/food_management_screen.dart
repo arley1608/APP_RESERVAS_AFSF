@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_service.dart';
 
 class FoodManagementScreen extends StatefulWidget {
   @override
@@ -7,6 +8,7 @@ class FoodManagementScreen extends StatefulWidget {
 }
 
 class _FoodManagementScreenState extends State<FoodManagementScreen> {
+  final FirestoreService _service = FirestoreService();
   final TextEditingController nombreController = TextEditingController();
   final TextEditingController precioController = TextEditingController();
   final TextEditingController descripcionController = TextEditingController();
@@ -14,32 +16,14 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
   String? editingId;
 
   final List<String> foodTypes = [
-    "Desayuno",
-    "Almuerzo",
-    "Cena",
-    "Bebida",
-    "Snack",
-    "Postre",
-    "Especial"
+    "Desayuno", "Almuerzo", "Cena", "Bebida", "Snack", "Postre", "Especial"
   ];
 
-  void _showSuccessDialog(String message) {
-    _showDialog(
-      title: "Éxito",
-      message: message,
-      icon: Icons.check_circle,
-      iconColor: Colors.green,
-    );
-  }
+  void _showSuccessDialog(String message) => _showDialog(
+      title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
 
-  void _showErrorDialog(String message) {
-    _showDialog(
-      title: "Error",
-      message: message,
-      icon: Icons.error,
-      iconColor: Colors.red,
-    );
-  }
+  void _showErrorDialog(String message) => _showDialog(
+      title: "Error", message: message, icon: Icons.error, iconColor: Colors.red);
 
   void _showDialog({
     required String title,
@@ -49,26 +33,21 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
   }) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(icon, color: iconColor, size: 28),
-              SizedBox(width: 10),
-              Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(icon, color: iconColor, size: 28),
+          SizedBox(width: 10),
+          Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(message, style: TextStyle(fontSize: 18)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text("Aceptar"),
           ),
-          content: Text(message, style: TextStyle(fontSize: 18)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text("Aceptar"),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -77,42 +56,31 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
       _showErrorDialog("El nombre es requerido");
       return;
     }
-
-    final precio =
-        double.tryParse(precioController.text.replaceAll(',', '.')) ?? 0;
+    final precio = double.tryParse(precioController.text.replaceAll(',', '.')) ?? 0;
     if (precio <= 0) {
       _showErrorDialog("Ingrese un precio válido mayor a cero");
       return;
     }
-
     if (descripcionController.text.trim().isEmpty) {
       _showErrorDialog("La descripción es requerida");
       return;
     }
 
     try {
-      final alimentoData = {
+      final data = {
         'nombre': nombreController.text.trim(),
         'tipo': selectedTipo,
         'precio': precio,
         'descripcion': descripcionController.text.trim(),
-        'updatedAt': FieldValue.serverTimestamp(),
       };
 
       if (editingId == null) {
-        alimentoData['createdAt'] = FieldValue.serverTimestamp();
-        await FirebaseFirestore.instance
-            .collection('alimentos')
-            .add(alimentoData);
+        await _service.addAlimento(data);
         _showSuccessDialog("Alimento creado correctamente");
       } else {
-        await FirebaseFirestore.instance
-            .collection('alimentos')
-            .doc(editingId)
-            .update(alimentoData);
+        await _service.updateAlimento(editingId!, data);
         _showSuccessDialog("Alimento actualizado correctamente");
       }
-
       _resetForm();
     } catch (e) {
       _showErrorDialog("No se pudo guardar el alimento: ${e.toString()}");
@@ -124,21 +92,15 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.warning, color: Colors.orange, size: 28),
-            SizedBox(width: 10),
-            Text("Confirmar eliminación",
-                style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
+        title: Row(children: [
+          Icon(Icons.warning, color: Colors.orange, size: 28),
+          SizedBox(width: 10),
+          Text("Confirmar eliminación", style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
         content: Text("¿Estás seguro de eliminar este alimento?",
             style: TextStyle(fontSize: 18)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text("Cancelar"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Cancelar")),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text("Eliminar", style: TextStyle(color: Colors.red)),
@@ -149,10 +111,7 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
 
     if (confirm == true) {
       try {
-        await FirebaseFirestore.instance
-            .collection('alimentos')
-            .doc(id)
-            .delete();
+        await _service.deleteAlimento(id);
         _showSuccessDialog("Alimento eliminado correctamente");
       } catch (e) {
         _showErrorDialog("No se pudo eliminar: ${e.toString()}");
@@ -185,10 +144,7 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text("Gestión de Alimentos",
-            style: TextStyle(
-                fontSize: 28,
-                color: Colors.white,
-                fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
           icon: Icon(Icons.arrow_back_ios_new, size: 35, color: Colors.white),
@@ -259,9 +215,7 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
                     minimumSize: Size(double.infinity, 50),
                   ),
                   child: Text(
-                    editingId == null
-                        ? "Guardar Alimento"
-                        : "Actualizar Alimento",
+                    editingId == null ? "Guardar Alimento" : "Actualizar Alimento",
                     style: TextStyle(fontSize: 18),
                   ),
                 ),
@@ -270,10 +224,7 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('alimentos')
-                  .orderBy('nombre')
-                  .snapshots(),
+              stream: _service.getAlimentos(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator());
@@ -281,13 +232,10 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
                 if (snapshot.hasError) {
                   return Center(child: Text("Error al cargar los datos"));
                 }
-
                 final foods = snapshot.data?.docs ?? [];
-
                 if (foods.isEmpty) {
                   return Center(child: Text("No hay alimentos registrados"));
                 }
-
                 return ListView.builder(
                   itemCount: foods.length,
                   itemBuilder: (context, index) {
@@ -296,11 +244,9 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
                     return Card(
                       margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       child: ListTile(
-                        leading: Icon(Icons.restaurant,
-                            size: 40, color: Colors.green),
+                        leading: Icon(Icons.restaurant, size: 40, color: Colors.green),
                         title: Text("${data['tipo']} - ${data['nombre']}",
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 18)),
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                         subtitle: Text(
                             "Precio: \$${data['precio']}\n${data['descripcion']}",
                             style: TextStyle(fontSize: 16)),
@@ -309,8 +255,7 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
                           children: [
                             IconButton(
                               icon: Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () =>
-                                  _loadAlimentoForEdit(data, doc.id),
+                              onPressed: () => _loadAlimentoForEdit(data, doc.id),
                             ),
                             IconButton(
                               icon: Icon(Icons.delete, color: Colors.red),

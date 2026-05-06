@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_service.dart';
 
 class ActivityManagementScreen extends StatefulWidget {
   @override
@@ -8,28 +9,17 @@ class ActivityManagementScreen extends StatefulWidget {
 }
 
 class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
+  final FirestoreService _service = FirestoreService();
   final TextEditingController nombreController = TextEditingController();
   final TextEditingController precioController = TextEditingController();
   final TextEditingController descripcionController = TextEditingController();
   String? editingId;
 
-  void _showSuccessDialog(String message) {
-    _showDialog(
-      title: "Éxito",
-      message: message,
-      icon: Icons.check_circle,
-      iconColor: Colors.green,
-    );
-  }
+  void _showSuccessDialog(String message) => _showDialog(
+      title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
 
-  void _showErrorDialog(String message) {
-    _showDialog(
-      title: "Error",
-      message: message,
-      icon: Icons.error,
-      iconColor: Colors.red,
-    );
-  }
+  void _showErrorDialog(String message) => _showDialog(
+      title: "Error", message: message, icon: Icons.error, iconColor: Colors.red);
 
   void _showDialog({
     required String title,
@@ -39,26 +29,21 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
   }) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(icon, color: iconColor, size: 28),
-              SizedBox(width: 10),
-              Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(icon, color: iconColor, size: 28),
+          SizedBox(width: 10),
+          Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(message, style: TextStyle(fontSize: 18)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text("Aceptar"),
           ),
-          content: Text(message, style: TextStyle(fontSize: 18)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text("Aceptar"),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -67,41 +52,30 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
       _showErrorDialog("El nombre es requerido");
       return;
     }
-
-    final precio =
-        double.tryParse(precioController.text.replaceAll(',', '.')) ?? 0;
+    final precio = double.tryParse(precioController.text.replaceAll(',', '.')) ?? 0;
     if (precio <= 0) {
       _showErrorDialog("Ingrese un precio válido mayor a cero");
       return;
     }
-
     if (descripcionController.text.trim().isEmpty) {
       _showErrorDialog("La descripción es requerida");
       return;
     }
 
     try {
-      final actividadData = {
+      final data = {
         'nombre': nombreController.text.trim(),
         'precio': precio,
         'descripcion': descripcionController.text.trim(),
-        'updatedAt': FieldValue.serverTimestamp(),
       };
 
       if (editingId == null) {
-        actividadData['createdAt'] = FieldValue.serverTimestamp();
-        await FirebaseFirestore.instance
-            .collection('actividades')
-            .add(actividadData);
+        await _service.addActividad(data);
         _showSuccessDialog("Actividad creada correctamente");
       } else {
-        await FirebaseFirestore.instance
-            .collection('actividades')
-            .doc(editingId)
-            .update(actividadData);
+        await _service.updateActividad(editingId!, data);
         _showSuccessDialog("Actividad actualizada correctamente");
       }
-
       _resetForm();
     } catch (e) {
       _showErrorDialog("No se pudo guardar la actividad: ${e.toString()}");
@@ -113,21 +87,15 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: [
-            Icon(Icons.warning, color: Colors.orange, size: 28),
-            SizedBox(width: 10),
-            Text("Confirmar eliminación",
-                style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
+        title: Row(children: [
+          Icon(Icons.warning, color: Colors.orange, size: 28),
+          SizedBox(width: 10),
+          Text("Confirmar eliminación", style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
         content: Text("¿Estás seguro de eliminar esta actividad?",
             style: TextStyle(fontSize: 18)),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text("Cancelar"),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text("Cancelar")),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text("Eliminar", style: TextStyle(color: Colors.red)),
@@ -138,10 +106,7 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
 
     if (confirm == true) {
       try {
-        await FirebaseFirestore.instance
-            .collection('actividades')
-            .doc(id)
-            .delete();
+        await _service.deleteActividad(id);
         _showSuccessDialog("Actividad eliminada correctamente");
       } catch (e) {
         _showErrorDialog("No se pudo eliminar: ${e.toString()}");
@@ -172,10 +137,7 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text("Gestión de Actividades",
-            style: TextStyle(
-                fontSize: 28,
-                color: Colors.white,
-                fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
           icon: Icon(Icons.arrow_back_ios_new, size: 35, color: Colors.white),
@@ -227,9 +189,7 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
                     minimumSize: Size(double.infinity, 50),
                   ),
                   child: Text(
-                    editingId == null
-                        ? "Guardar Actividad"
-                        : "Actualizar Actividad",
+                    editingId == null ? "Guardar Actividad" : "Actualizar Actividad",
                     style: TextStyle(fontSize: 18),
                   ),
                 ),
@@ -238,10 +198,7 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('actividades')
-                  .orderBy('nombre')
-                  .snapshots(),
+              stream: _service.getActividades(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator());
@@ -249,13 +206,10 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
                 if (snapshot.hasError) {
                   return Center(child: Text("Error al cargar los datos"));
                 }
-
                 final activities = snapshot.data?.docs ?? [];
-
                 if (activities.isEmpty) {
                   return Center(child: Text("No hay actividades registradas"));
                 }
-
                 return ListView.builder(
                   itemCount: activities.length,
                   itemBuilder: (context, index) {
@@ -264,11 +218,9 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
                     return Card(
                       margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       child: ListTile(
-                        leading: Icon(Icons.sports_soccer,
-                            size: 40, color: Colors.green),
+                        leading: Icon(Icons.sports_soccer, size: 40, color: Colors.green),
                         title: Text(data['nombre'],
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 18)),
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                         subtitle: Text(
                             "Precio: \$${data['precio']}\n${data['descripcion']}",
                             style: TextStyle(fontSize: 16)),
@@ -277,8 +229,7 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
                           children: [
                             IconButton(
                               icon: Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () =>
-                                  _loadActividadForEdit(data, doc.id),
+                              onPressed: () => _loadActividadForEdit(data, doc.id),
                             ),
                             IconButton(
                               icon: Icon(Icons.delete, color: Colors.red),

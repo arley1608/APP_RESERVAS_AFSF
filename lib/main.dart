@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../screens/login_screen.dart';
-import '../screens/dashboard_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/dashboard_screen.dart';
+import 'services/user_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,15 +17,15 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Gestión de Reservas',
-      theme: ThemeData(
-        primarySwatch: Colors.green,
-      ),
+      theme: ThemeData(primarySwatch: Colors.green),
       home: AuthWrapper(),
     );
   }
 }
 
 class AuthWrapper extends StatelessWidget {
+  final UserService _userService = UserService();
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
@@ -38,7 +38,7 @@ class AuthWrapper extends StatelessWidget {
         }
         if (snapshot.hasData && snapshot.data != null) {
           return FutureBuilder<String?>(
-            future: getUserRole(snapshot.data!.uid),
+            future: _userService.getUserRole(snapshot.data!.uid),
             builder: (context, roleSnapshot) {
               if (roleSnapshot.connectionState == ConnectionState.waiting) {
                 return Scaffold(
@@ -55,22 +55,5 @@ class AuthWrapper extends StatelessWidget {
         return LoginScreen();
       },
     );
-  }
-
-  Future<String?> getUserRole(String uid) async {
-    try {
-      DocumentSnapshot snapshot = await FirebaseFirestore.instance
-          .collection('usuarios')
-          .doc(uid)
-          .get();
-      if (snapshot.exists) {
-        final data = snapshot.data() as Map<String, dynamic>?;
-        return data?['rol'];
-      }
-      return null;
-    } catch (e) {
-      print("Error al obtener el rol del usuario: $e");
-      return null;
-    }
   }
 }

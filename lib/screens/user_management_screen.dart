@@ -15,40 +15,72 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   bool isLoading = false;
 
   Future<void> _createUser() async {
-    // Validación de campos
     if (nombreController.text.isEmpty ||
         emailController.text.isEmpty ||
         passwordController.text.isEmpty) {
       _showErrorDialog("Todos los campos son requeridos");
       return;
     }
-
     if (passwordController.text.length < 6) {
       _showErrorDialog("La contraseña debe tener al menos 6 caracteres");
       return;
     }
 
     setState(() => isLoading = true);
+
+    final adminUser = FirebaseAuth.instance.currentUser;
+    final adminEmail = adminUser?.email;
+
+    final adminPassword = await _pedirPasswordAdmin();
+    if (adminPassword == null) {
+      setState(() => isLoading = false);
+      return;
+    }
+
+    final newEmail = emailController.text.trim();
+    final newPassword = passwordController.text.trim();
+    final newNombre = nombreController.text.trim();
+    final newRol = rolSeleccionado;
+
     try {
-      // Crear el nuevo usuario
+      // Crear el nuevo usuario (esto cambia la sesión activa)
       UserCredential userCredential =
           await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: emailController.text.trim(),
-        password: passwordController.text.trim(),
+        email: newEmail,
+        password: newPassword,
       );
 
-      // Guardar datos adicionales en Firestore
-      String uid = userCredential.user!.uid;
-      await FirebaseFirestore.instance.collection('usuarios').doc(uid).set({
-        'nombre': nombreController.text.trim(),
-        'email': emailController.text.trim(),
-        'rol': rolSeleccionado,
+      // Guardar en Firestore
+      await FirebaseFirestore.instance
+          .collection('usuarios')
+          .doc(userCredential.user!.uid)
+          .set({
+        'nombre': newNombre,
+        'email': newEmail,
+        'rol': newRol,
+        'activo': true,
         'createdAt': FieldValue.serverTimestamp(),
       });
+
+      // Cerrar sesión del nuevo usuario y restaurar sesión del admin
+      await FirebaseAuth.instance.signOut();
+      await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: adminEmail!,
+        password: adminPassword,
+      );
 
       _showSuccessDialog("Usuario creado correctamente");
       _resetForm();
     } on FirebaseAuthException catch (e) {
+      // Restaurar sesión del admin ante cualquier error
+      try {
+        await FirebaseAuth.instance.signOut();
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: adminEmail!,
+          password: adminPassword,
+        );
+      } catch (_) {}
+
       String errorMessage = "Error al crear usuario";
       if (e.code == 'weak-password') {
         errorMessage = "La contraseña es muy débil";
@@ -59,41 +91,128 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
       }
       _showErrorDialog(errorMessage);
     } catch (e) {
+      // Restaurar sesión del admin ante cualquier error
+      try {
+        await FirebaseAuth.instance.signOut();
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: adminEmail!,
+          password: adminPassword,
+        );
+      } catch (_) {}
       _showErrorDialog("Error inesperado: ${e.toString()}");
     } finally {
       setState(() => isLoading = false);
     }
   }
 
-  Future<void> _deleteUser(String userId) async {
+  Future<String?> _pedirPasswordAdmin() async {
+    final controller = TextEditingController();
+    return await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.lock, color: Colors.green[700]),
+          SizedBox(width: 10),
+          Text("Confirmar identidad",
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        ]),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Para crear el usuario ingresa tu contraseña de administrador:",
+              style: TextStyle(fontSize: 15, color: Colors.grey[700]),
+            ),
+            SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: "Tu contraseña",
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.key),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, null),
+            child: Text("Cancelar"),
+          ),
+          ElevatedButton(
+            style:
+                ElevatedButton.styleFrom(backgroundColor: Colors.green[700]),
+            onPressed: () {
+              if (controller.text.isEmpty) return;
+              Navigator.pop(context, controller.text);
+            },
+            child: Text("Confirmar", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteUser(String userId, String userName) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(Icons.warning, color: Colors.orange, size: 28),
+          SizedBox(width: 10),
+          Text("Confirmar Eliminación",
+              style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(
+          "¿Estás seguro de eliminar a $userName?\nEsta acción desactivará su acceso al sistema.",
+          style: TextStyle(fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text("Cancelar"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text("Eliminar", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
     try {
       await FirebaseFirestore.instance
           .collection('usuarios')
           .doc(userId)
-          .delete();
-      _showSuccessDialog("Usuario eliminado correctamente");
+          .update({
+        'activo': false,
+        'eliminadoEn': FieldValue.serverTimestamp(),
+      });
+      _showSuccessDialog("Usuario desactivado correctamente.\nYa no podrá acceder al sistema.");
     } catch (e) {
       _showErrorDialog("Error al eliminar usuario: ${e.toString()}");
     }
   }
 
-  void _showSuccessDialog(String message) {
-    _showDialog(
+  void _showSuccessDialog(String message) => _showDialog(
       title: "Éxito",
       message: message,
       icon: Icons.check_circle,
-      iconColor: Colors.green,
-    );
-  }
+      iconColor: Colors.green);
 
-  void _showErrorDialog(String message) {
-    _showDialog(
+  void _showErrorDialog(String message) => _showDialog(
       title: "Error",
       message: message,
       icon: Icons.error,
-      iconColor: Colors.red,
-    );
-  }
+      iconColor: Colors.red);
 
   void _showDialog({
     required String title,
@@ -103,34 +222,30 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   }) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(icon, color: iconColor, size: 28),
-              SizedBox(width: 10),
-              Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(icon, color: iconColor, size: 28),
+          SizedBox(width: 10),
+          Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(message, style: TextStyle(fontSize: 16)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text("Aceptar"),
           ),
-          content: Text(message, style: TextStyle(fontSize: 18)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text("Aceptar"),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
   void _showAddUserDialog() {
+    _resetForm();
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text("Agregar Usuario",
@@ -177,8 +292,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   child: DropdownButton<String>(
                     isExpanded: true,
                     value: rolSeleccionado,
-                    onChanged: (value) =>
-                        setState(() => rolSeleccionado = value!),
+                    onChanged: (value) {
+                      setState(() => rolSeleccionado = value!);
+                      setDialogState(() => rolSeleccionado = value!);
+                    },
                     items: ["admin", "operador", "recepcionista"]
                         .map((rol) => DropdownMenuItem(
                               value: rol,
@@ -206,51 +323,12 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                       Navigator.of(context).pop();
                       _createUser();
                     },
-              child: isLoading
-                  ? CircularProgressIndicator(color: Colors.white)
-                  : Text("Agregar Usuario", style: TextStyle(fontSize: 16)),
+              child: Text("Agregar",
+                  style: TextStyle(fontSize: 16, color: Colors.white)),
             ),
           ],
-        );
-      },
-    );
-  }
-
-  void _showConfirmationDialog(String userId, String userName) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(Icons.warning, color: Colors.orange, size: 28),
-              SizedBox(width: 10),
-              Text("Confirmar Eliminación",
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: Text(
-            "¿Estás seguro de eliminar a $userName? Esta acción no se puede deshacer.",
-            style: TextStyle(fontSize: 18),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text("Cancelar", style: TextStyle(fontSize: 16)),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _deleteUser(userId);
-              },
-              child: Text("Eliminar",
-                  style: TextStyle(color: Colors.red, fontSize: 16)),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -258,7 +336,7 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     nombreController.clear();
     emailController.clear();
     passwordController.clear();
-    rolSeleccionado = "operador";
+    setState(() => rolSeleccionado = "operador");
   }
 
   @override
@@ -293,8 +371,9 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream:
-                  FirebaseFirestore.instance.collection('usuarios').snapshots(),
+              stream: FirebaseFirestore.instance
+                  .collection('usuarios')
+                  .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(child: CircularProgressIndicator());
@@ -303,7 +382,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   return Center(child: Text("Error al cargar usuarios"));
                 }
 
-                final users = snapshot.data?.docs ?? [];
+                // Mostrar solo usuarios activos
+                final users = (snapshot.data?.docs ?? []).where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  return data['activo'] != false;
+                }).toList();
 
                 if (users.isEmpty) {
                   return Center(child: Text("No hay usuarios registrados"));
@@ -315,11 +398,13 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                     final doc = users[index];
                     final data = doc.data() as Map<String, dynamic>? ?? {};
                     return Card(
-                      margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      margin:
+                          EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       child: ListTile(
                         leading: Icon(Icons.person,
                             size: 40, color: _getRoleColor(data['rol'])),
-                        title: Text(data['nombre']?.toString() ?? 'Sin nombre',
+                        title: Text(
+                            data['nombre']?.toString() ?? 'Sin nombre',
                             style: TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 18)),
                         subtitle: Column(
@@ -334,11 +419,10 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                           ],
                         ),
                         trailing: IconButton(
-                          icon: Icon(Icons.delete, color: Colors.red, size: 28),
-                          onPressed: () {
-                            _showConfirmationDialog(doc.id,
-                                data['nombre']?.toString() ?? 'Usuario');
-                          },
+                          icon:
+                              Icon(Icons.delete, color: Colors.red, size: 28),
+                          onPressed: () => _deleteUser(doc.id,
+                              data['nombre']?.toString() ?? 'Usuario'),
                         ),
                       ),
                     );

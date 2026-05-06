@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/firestore_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   @override
@@ -8,6 +8,7 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final FirestoreService _service = FirestoreService();
   final TextEditingController nameController = TextEditingController();
   final TextEditingController oldPasswordController = TextEditingController();
   final TextEditingController newPasswordController = TextEditingController();
@@ -22,13 +23,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadUserData() async {
     User? user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      DocumentSnapshot snapshot = await FirebaseFirestore.instance
-          .collection('usuarios')
-          .doc(user.uid)
-          .get();
-      setState(() {
-        nameController.text = snapshot["nombre"] ?? "";
-      });
+      final data = await _service.getUsuario(user.uid);
+      if (data != null) {
+        setState(() => nameController.text = data['nombre'] ?? "");
+      }
     }
   }
 
@@ -37,18 +35,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _showErrorDialog("El nombre no puede estar vacío");
       return;
     }
-
     setState(() => isLoading = true);
     try {
       User? user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        await FirebaseFirestore.instance
-            .collection('usuarios')
-            .doc(user.uid)
-            .update({
-          'nombre': nameController.text.trim(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        await _service.updateUsuario(user.uid, {'nombre': nameController.text.trim()});
         _showSuccessDialog("Nombre actualizado correctamente");
       }
     } catch (e) {
@@ -63,7 +54,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _showErrorDialog("La contraseña debe tener al menos 6 caracteres");
       return;
     }
-
     setState(() => isLoading = true);
     try {
       User? user = FirebaseAuth.instance.currentUser;
@@ -80,11 +70,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } on FirebaseAuthException catch (e) {
       String errorMessage = "Error al actualizar la contraseña";
-      if (e.code == 'wrong-password') {
-        errorMessage = "La contraseña actual es incorrecta";
-      } else if (e.code == 'weak-password') {
-        errorMessage = "La nueva contraseña es muy débil";
-      }
+      if (e.code == 'wrong-password') errorMessage = "La contraseña actual es incorrecta";
+      if (e.code == 'weak-password') errorMessage = "La nueva contraseña es muy débil";
       _showErrorDialog(errorMessage);
     } catch (e) {
       _showErrorDialog("Error inesperado: ${e.toString()}");
@@ -93,23 +80,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  void _showSuccessDialog(String message) {
-    _showDialog(
-      title: "Éxito",
-      message: message,
-      icon: Icons.check_circle,
-      iconColor: Colors.green,
-    );
-  }
+  void _showSuccessDialog(String message) => _showDialog(
+      title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
 
-  void _showErrorDialog(String message) {
-    _showDialog(
-      title: "Error",
-      message: message,
-      icon: Icons.error,
-      iconColor: Colors.red,
-    );
-  }
+  void _showErrorDialog(String message) => _showDialog(
+      title: "Error", message: message, icon: Icons.error, iconColor: Colors.red);
 
   void _showDialog({
     required String title,
@@ -119,26 +94,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }) {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Row(
-            children: [
-              Icon(icon, color: iconColor, size: 28),
-              SizedBox(width: 10),
-              Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(children: [
+          Icon(icon, color: iconColor, size: 28),
+          SizedBox(width: 10),
+          Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(message, style: TextStyle(fontSize: 18)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text("Aceptar"),
           ),
-          content: Text(message, style: TextStyle(fontSize: 18)),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text("Aceptar"),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -147,10 +117,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text("Perfil de Usuario",
-            style: TextStyle(
-                fontSize: 28,
-                color: Colors.white,
-                fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
           icon: Icon(Icons.arrow_back_ios_new, size: 35, color: Colors.white),
@@ -169,21 +136,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             SizedBox(height: 20),
             Card(
               elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      "Información Personal",
-                      style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green[700]),
-                    ),
+                    Text("Información Personal",
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.bold, color: Colors.green[700])),
                     SizedBox(height: 20),
                     TextField(
                       controller: nameController,
@@ -206,11 +167,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onPressed: isLoading ? null : _updateProfile,
                         child: isLoading
                             ? CircularProgressIndicator(color: Colors.white)
-                            : Text(
-                                "Actualizar Nombre",
-                                style: TextStyle(
-                                    fontSize: 18, color: Colors.white),
-                              ),
+                            : Text("Actualizar Nombre",
+                                style: TextStyle(fontSize: 18, color: Colors.white)),
                       ),
                     ),
                   ],
@@ -220,21 +178,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             SizedBox(height: 30),
             Card(
               elevation: 4,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      "Cambiar Contraseña",
-                      style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green[700]),
-                    ),
+                    Text("Cambiar Contraseña",
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.bold, color: Colors.green[700])),
                     SizedBox(height: 20),
                     TextField(
                       controller: oldPasswordController,
@@ -270,11 +222,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onPressed: isLoading ? null : _updatePassword,
                         child: isLoading
                             ? CircularProgressIndicator(color: Colors.white)
-                            : Text(
-                                "Actualizar Contraseña",
-                                style: TextStyle(
-                                    fontSize: 18, color: Colors.white),
-                              ),
+                            : Text("Actualizar Contraseña",
+                                style: TextStyle(fontSize: 18, color: Colors.white)),
                       ),
                     ),
                   ],
