@@ -13,6 +13,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController oldPasswordController = TextEditingController();
   final TextEditingController newPasswordController = TextEditingController();
   bool isLoading = false;
+  String _rol = '';
+  String _email = '';
 
   @override
   void initState() {
@@ -25,7 +27,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (user != null) {
       final data = await _service.getUsuario(user.uid);
       if (data != null) {
-        setState(() => nameController.text = data['nombre'] ?? "");
+        setState(() {
+          nameController.text = data['nombre'] ?? '';
+          _rol = data['rol'] ?? '';
+          _email = user.email ?? '';
+        });
       }
     }
   }
@@ -39,7 +45,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     try {
       User? user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        await _service.updateUsuario(user.uid, {'nombre': nameController.text.trim()});
+        await _service.updateUsuario(
+            user.uid, {'nombre': nameController.text.trim()});
         _showSuccessDialog("Nombre actualizado correctamente");
       }
     } catch (e) {
@@ -70,8 +77,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } on FirebaseAuthException catch (e) {
       String errorMessage = "Error al actualizar la contraseña";
-      if (e.code == 'wrong-password') errorMessage = "La contraseña actual es incorrecta";
-      if (e.code == 'weak-password') errorMessage = "La nueva contraseña es muy débil";
+      if (e.code == 'wrong-password')
+        errorMessage = "La contraseña actual es incorrecta";
+      if (e.code == 'weak-password')
+        errorMessage = "La nueva contraseña es muy débil";
       _showErrorDialog(errorMessage);
     } catch (e) {
       _showErrorDialog("Error inesperado: ${e.toString()}");
@@ -80,11 +89,41 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Color _getRolColor(String rol) {
+    switch (rol) {
+      case 'admin':
+        return Colors.red[700]!;
+      case 'recepcionista':
+        return Colors.green[700]!;
+      default:
+        return Colors.blue[700]!;
+    }
+  }
+
+  String _getRolLabel(String rol) {
+    switch (rol) {
+      case 'admin':
+        return 'Administrador';
+      case 'recepcionista':
+        return 'Recepcionista';
+      case 'operador':
+        return 'Operador';
+      default:
+        return rol;
+    }
+  }
+
   void _showSuccessDialog(String message) => _showDialog(
-      title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
+      title: "Éxito",
+      message: message,
+      icon: Icons.check_circle,
+      iconColor: Colors.green);
 
   void _showErrorDialog(String message) => _showDialog(
-      title: "Error", message: message, icon: Icons.error, iconColor: Colors.red);
+      title: "Error",
+      message: message,
+      icon: Icons.error,
+      iconColor: Colors.red);
 
   void _showDialog({
     required String title,
@@ -95,7 +134,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(children: [
           Icon(icon, color: iconColor, size: 28),
           SizedBox(width: 10),
@@ -117,7 +157,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text("Perfil de Usuario",
-            style: TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold)),
+            style: TextStyle(
+                fontSize: 28,
+                color: Colors.white,
+                fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
           icon: Icon(Icons.arrow_back_ios_new, size: 35, color: Colors.white),
@@ -128,15 +171,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
         padding: EdgeInsets.all(20),
         child: Column(
           children: [
+            // Avatar y rol
             CircleAvatar(
               radius: 50,
               backgroundColor: Colors.green[700],
               child: Icon(Icons.person, size: 60, color: Colors.white),
             ),
+            SizedBox(height: 12),
+            if (_rol.isNotEmpty)
+              Chip(
+                avatar: Icon(Icons.verified_user,
+                    color: Colors.white, size: 16),
+                label: Text(
+                  _getRolLabel(_rol),
+                  style: TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                backgroundColor: _getRolColor(_rol),
+              ),
+            SizedBox(height: 4),
+            if (_email.isNotEmpty)
+              Text(
+                _email,
+                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              ),
             SizedBox(height: 20),
+
+            // Información Personal
             Card(
               elevation: 4,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Column(
@@ -144,7 +209,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     Text("Información Personal",
                         style: TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.bold, color: Colors.green[700])),
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green[700])),
                     SizedBox(height: 20),
                     TextField(
                       controller: nameController,
@@ -168,7 +235,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: isLoading
                             ? CircularProgressIndicator(color: Colors.white)
                             : Text("Actualizar Nombre",
-                                style: TextStyle(fontSize: 18, color: Colors.white)),
+                                style: TextStyle(
+                                    fontSize: 18, color: Colors.white)),
                       ),
                     ),
                   ],
@@ -176,9 +244,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
             SizedBox(height: 30),
+
+            // Cambiar Contraseña
             Card(
               elevation: 4,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: EdgeInsets.all(16),
                 child: Column(
@@ -186,7 +257,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     Text("Cambiar Contraseña",
                         style: TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.bold, color: Colors.green[700])),
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green[700])),
                     SizedBox(height: 20),
                     TextField(
                       controller: oldPasswordController,
@@ -223,7 +296,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         child: isLoading
                             ? CircularProgressIndicator(color: Colors.white)
                             : Text("Actualizar Contraseña",
-                                style: TextStyle(fontSize: 18, color: Colors.white)),
+                                style: TextStyle(
+                                    fontSize: 18, color: Colors.white)),
                       ),
                     ),
                   ],

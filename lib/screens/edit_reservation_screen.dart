@@ -49,13 +49,14 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
       setState(() => _isLoading = true);
 
       if (widget.rol == 'operador') {
+        // Operador ve TODAS sus reservas sin filtro de estado
         _reservationsStream = FirebaseFirestore.instance
             .collection('reservas')
             .where('usuarioId', isEqualTo: widget.uid)
-            .where('estado', whereIn: ['pendiente', 'confirmada'])
             .orderBy('fechaEntrada', descending: false)
             .snapshots();
       } else {
+        // Admin ve pendientes y confirmadas para editar
         _reservationsStream = FirebaseFirestore.instance
             .collection('reservas')
             .where('estado', whereIn: ['pendiente', 'confirmada'])
@@ -94,8 +95,8 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child:
-                const Text('Sí, cancelar', style: TextStyle(color: Colors.red)),
+            child: const Text('Sí, cancelar',
+                style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -112,7 +113,6 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
     }
   }
 
-  // Navega a ReservationScreen en modo edición
   void _editReservation(String reservationId, Map<String, dynamic> data) {
     Navigator.push(
       context,
@@ -169,14 +169,21 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'confirmada':
-        return Colors.green;
-      case 'cancelada':
-        return Colors.red;
-      case 'completada':
-        return Colors.blue;
-      default:
-        return Colors.orange;
+      case 'confirmada': return Colors.green;
+      case 'cancelada': return Colors.red;
+      case 'completada': return Colors.blue;
+      case 'activa': return Colors.teal;
+      default: return Colors.orange;
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status) {
+      case 'confirmada': return Icons.check_circle;
+      case 'cancelada': return Icons.cancel;
+      case 'completada': return Icons.task_alt;
+      case 'activa': return Icons.hotel;
+      default: return Icons.pending;
     }
   }
 
@@ -213,8 +220,8 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
               decoration: InputDecoration(
                 labelText: 'Buscar por nombre, email o teléfono',
                 prefixIcon: const Icon(Icons.search),
-                border:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
               ),
             ),
           ),
@@ -266,7 +273,7 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
                                   SizedBox(height: 16),
                                   Text(
                                     widget.rol == 'operador'
-                                        ? 'No tienes reservas activas'
+                                        ? 'No tienes reservas registradas'
                                         : 'No se encontraron reservas',
                                     style: TextStyle(
                                         fontSize: 18, color: Colors.grey),
@@ -284,8 +291,12 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
                               final reservation = reservations[index];
                               final data =
                                   reservation.data() as Map<String, dynamic>;
-                              return _buildReservationCard(
-                                  reservation.id, data);
+                              // Operador ve tarjeta simplificada
+                              if (widget.rol == 'operador') {
+                                return _buildOperadorCard(
+                                    reservation.id, data);
+                              }
+                              return _buildAdminCard(reservation.id, data);
                             },
                           );
                         },
@@ -296,7 +307,149 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
     );
   }
 
-  Widget _buildReservationCard(
+  // Tarjeta simplificada para operador: solo estado y datos de la reserva original
+  Widget _buildOperadorCard(
+      String reservationId, Map<String, dynamic> data) {
+    final fechaEntrada = (data['fechaEntrada'] as Timestamp).toDate();
+    final fechaSalida = (data['fechaSalida'] as Timestamp).toDate();
+    final estado = data['estado']?.toString().toLowerCase() ?? 'pendiente';
+    final noches = fechaSalida.difference(fechaEntrada).inDays;
+    final total = (data['precioTotal'] ?? 0).toDouble();
+    final abono = (data['abono'] ?? 0).toDouble();
+    final saldo = total - abono;
+    final puedeEditar =
+        estado == 'pendiente' || estado == 'confirmada';
+    final puedeCancelar =
+        estado == 'pendiente' || estado == 'confirmada';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header con estado
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Reserva #${reservationId.substring(0, 8)}',
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green[700]),
+                ),
+                Chip(
+                  avatar: Icon(_getStatusIcon(estado),
+                      color: Colors.white, size: 14),
+                  label: Text(estado.toUpperCase(),
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 11)),
+                  backgroundColor: _getStatusColor(estado),
+                ),
+              ],
+            ),
+            const Divider(),
+
+            // Datos del cliente
+            _buildInfoRow('Cliente', data['nombre'] ?? 'N/A'),
+            _buildInfoRow('Teléfono', data['telefono'] ?? 'N/A'),
+            _buildInfoRow('Entrada', _formatDate(data['fechaEntrada'])),
+            _buildInfoRow('Salida', _formatDate(data['fechaSalida'])),
+            _buildInfoRow('Noches', '$noches'),
+
+            const Divider(),
+
+            // Resumen económico de la reserva original
+            _buildInfoRow('Total reserva',
+                '\$${total.toStringAsFixed(2)}'),
+            _buildInfoRow('Abono pagado',
+                '\$${abono.toStringAsFixed(2)}'),
+            _buildInfoRow(
+              'Saldo inicial',
+              '\$${saldo.toStringAsFixed(2)}',
+              style: TextStyle(
+                color: saldo > 0 ? Colors.red : Colors.green,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+
+            // Método de pago
+            if (data['metodoPago'] != null)
+              _buildInfoRow('Método de pago', data['metodoPago']),
+
+            // Notas si las hay
+            if (data['notas'] != null &&
+                data['notas'].toString().isNotEmpty) ...[
+              const Divider(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.notes, size: 16, color: Colors.grey[600]),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      data['notas'],
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[700],
+                          fontStyle: FontStyle.italic),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+
+            // Botones solo si puede editar o cancelar
+            if (puedeEditar || puedeCancelar) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  if (puedeEditar)
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.edit, size: 18),
+                        label: const Text('EDITAR'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.blue,
+                          side: const BorderSide(color: Colors.blue),
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onPressed: () =>
+                            _editReservation(reservationId, data),
+                      ),
+                    ),
+                  if (puedeEditar && puedeCancelar)
+                    const SizedBox(width: 12),
+                  if (puedeCancelar)
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.cancel, size: 18),
+                        label: const Text('CANCELAR'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onPressed: () =>
+                            _cancelReservation(reservationId),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Tarjeta completa para admin
+  Widget _buildAdminCard(
       String reservationId, Map<String, dynamic> data) {
     final fechaEntrada = (data['fechaEntrada'] as Timestamp).toDate();
     final fechaSalida = (data['fechaSalida'] as Timestamp).toDate();
@@ -328,8 +481,8 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
                 ),
                 Chip(
                   label: Text(estado.toUpperCase(),
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 12)),
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 12)),
                   backgroundColor: _getStatusColor(estado),
                 ),
               ],
@@ -350,6 +503,26 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
                 fontWeight: FontWeight.bold,
               ),
             ),
+            if (data['notas'] != null &&
+                data['notas'].toString().isNotEmpty) ...[
+              const Divider(),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.notes, size: 16, color: Colors.grey[600]),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      data['notas'],
+                      style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey[700],
+                          fontStyle: FontStyle.italic),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -373,7 +546,8 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
                     icon: const Icon(Icons.cancel, size: 20),
                     label: const Text('CANCELAR'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isCanceled ? Colors.grey : Colors.red,
+                      backgroundColor:
+                          isCanceled ? Colors.grey : Colors.red,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                     onPressed: isCanceled
@@ -399,7 +573,8 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
               style: TextStyle(color: Colors.grey[600], fontSize: 14)),
           Text(value,
               style: style ??
-                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 14)),
         ],
       ),
     );

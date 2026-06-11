@@ -167,330 +167,133 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
     }
   }
 
-Future<void> _hacerCheckout(Map<String, dynamic> data) async {
-  final fechaEntrada = (data['fechaEntrada'] as Timestamp).toDate();
-  final fechaSalida = (data['fechaSalida'] as Timestamp).toDate();
-  final hoy = DateTime.now();
-  final hoySinHora = DateTime(hoy.year, hoy.month, hoy.day);
-  final entradaSinHora =
-      DateTime(fechaEntrada.year, fechaEntrada.month, fechaEntrada.day);
-  final salidaSinHora =
-      DateTime(fechaSalida.year, fechaSalida.month, fechaSalida.day);
-
-  final nochesOriginales = salidaSinHora.difference(entradaSinHora).inDays;
-  final nochesReales = hoySinHora.difference(entradaSinHora).inDays;
-  final esCheckoutAnticipado =
-      hoySinHora.isBefore(salidaSinHora) && nochesReales > 0;
-
-  // Calcular nuevo precio base si es checkout anticipado
-  double precioBaseRecalculado = 0;
-  double precioBaseOriginal = 0;
-
-  final alojamientos = (data['alojamientos'] as List?) ?? [];
-  for (final aloj in alojamientos) {
-    final totalAloj = (aloj['precioPorAlojamiento'] as num).toDouble();
-    precioBaseOriginal += totalAloj;
-    if (esCheckoutAnticipado && nochesOriginales > 0) {
-      // Extraer precio por noche y recalcular con noches reales
-      final precioPorNoche = totalAloj / nochesOriginales;
-      precioBaseRecalculado += precioPorNoche * nochesReales;
-    } else {
-      precioBaseRecalculado += totalAloj;
-    }
-  }
-
-  // Agregar actividades y alimentos de la reserva original
-  double extrasOriginales = 0;
-  final actividades = (data['actividades'] as List?) ?? [];
-  final alimentos = (data['alimentos'] as List?) ?? [];
-  for (final a in actividades) {
-    extrasOriginales += (a['subtotal'] as num).toDouble();
-  }
-  for (final a in alimentos) {
-    extrasOriginales += (a['subtotal'] as num).toDouble();
-  }
-
-  // Consumos durante la estadía
-  final consumos = (data['consumos'] as List?) ?? [];
-  final consumosTotal = consumos.fold<double>(
-      0, (sum, c) => sum + ((c['subtotal'] ?? 0) as num).toDouble());
-
-  final abono = (data['abono'] ?? 0).toDouble();
-  final totalFinal =
-      precioBaseRecalculado + extrasOriginales + consumosTotal;
-  final saldo = totalFinal - abono;
-
-  String? metodoPagoSaldo;
-  final List<String> metodosPago = [
-    'Efectivo',
-    'Tarjeta de Crédito',
-    'Tarjeta de Débito',
-    'Transferencia Bancaria',
-    'Depósito',
-    'Otro',
-  ];
-
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
+  Future<void> _eliminarConsumo(
+      int index, Map<String, dynamic> consumo, List consumos) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
         shape:
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(children: [
-          Icon(Icons.logout, color: Colors.blue[700], size: 28),
+          Icon(Icons.warning, color: Colors.orange, size: 28),
           SizedBox(width: 10),
-          Text('Confirmar Check-out',
+          Text('Eliminar consumo',
               style: TextStyle(fontWeight: FontWeight.bold)),
         ]),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Aviso de checkout anticipado
-              if (esCheckoutAnticipado) ...[
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.orange[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.info_outline,
-                          color: Colors.orange, size: 20),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Check-out anticipado',
-                                style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.orange[700])),
-                            SizedBox(height: 4),
-                            Text(
-                              'Salida programada: ${DateFormat('dd/MM/yyyy').format(fechaSalida)}\n'
-                              'Salida real: ${DateFormat('dd/MM/yyyy').format(hoy)}\n'
-                              'Noches originales: $nochesOriginales\n'
-                              'Noches reales: $nochesReales',
-                              style: TextStyle(fontSize: 13),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(height: 16),
-              ],
-
-              Text('Resumen final:',
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16)),
-              SizedBox(height: 12),
-
-              _buildResumenFila('Cliente', data['nombre'] ?? 'N/A'),
-              SizedBox(height: 8),
-
-              // Precio base
-              if (esCheckoutAnticipado) ...[
-                _buildResumenFila(
-                  'Alojamiento original',
-                  '\$${precioBaseOriginal.toStringAsFixed(2)}',
-                  color: Colors.grey,
-                ),
-                _buildResumenFila(
-                  'Alojamiento recalculado ($nochesReales noches)',
-                  '\$${precioBaseRecalculado.toStringAsFixed(2)}',
-                  color: Colors.green[700],
-                ),
-              ] else
-                _buildResumenFila(
-                  'Alojamiento',
-                  '\$${precioBaseOriginal.toStringAsFixed(2)}',
-                ),
-
-              if (extrasOriginales > 0)
-                _buildResumenFila('Actividades/Alimentos reserva',
-                    '\$${extrasOriginales.toStringAsFixed(2)}'),
-
-              if (consumosTotal > 0)
-                _buildResumenFila(
-                    'Consumos durante estadía',
-                    '\$${consumosTotal.toStringAsFixed(2)}',
-                    color: Colors.orange),
-
-              Divider(),
-              _buildResumenFila(
-                  'Total final', '\$${totalFinal.toStringAsFixed(2)}',
-                  bold: true),
-              _buildResumenFila(
-                  'Abono pagado', '\$${abono.toStringAsFixed(2)}'),
-              Divider(),
-              _buildResumenFila(
-                saldo > 0 ? 'Saldo a cobrar' : 'Devolución al huésped',
-                '\$${saldo.abs().toStringAsFixed(2)}',
-                color: saldo > 0 ? Colors.red : Colors.green,
-                bold: true,
-              ),
-              SizedBox(height: 20),
-
-              // Método de pago
-              if (saldo > 0) ...[
-                Text('Método de pago del saldo:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: metodoPagoSaldo,
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8)),
-                    labelText: 'Seleccione método de pago',
-                    prefixIcon: Icon(Icons.payment),
-                  ),
-                  items: metodosPago
-                      .map((m) => DropdownMenuItem(
-                            value: m,
-                            child: Text(m),
-                          ))
-                      .toList(),
-                  onChanged: (v) =>
-                      setDialogState(() => metodoPagoSaldo = v),
-                ),
-              ] else if (saldo < 0) ...[
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green),
-                  ),
-                  child: Row(children: [
-                    Icon(Icons.savings, color: Colors.green),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Devolver \$${saldo.abs().toStringAsFixed(2)} al huésped',
-                        style: TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ]),
-                ),
-              ] else ...[
-                Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green[50],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green),
-                  ),
-                  child: Row(children: [
-                    Icon(Icons.check_circle, color: Colors.green),
-                    SizedBox(width: 8),
-                    Text('Sin saldo pendiente',
-                        style: TextStyle(
-                            color: Colors.green,
-                            fontWeight: FontWeight.bold)),
-                  ]),
-                ),
-              ],
-            ],
-          ),
-        ),
+        content: Text('¿Eliminar "${consumo['nombre']}" de la cuenta?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
             child: Text('Cancelar'),
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue[700]),
-            onPressed: saldo > 0 && metodoPagoSaldo == null
-                ? null
-                : () => Navigator.pop(context, true),
-            child: Text('Confirmar Check-out',
-                style: TextStyle(color: Colors.white)),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Eliminar', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
-    ),
-  );
+    );
 
-  if (confirmed == true) {
-    setState(() => _isLoading = true);
-    try {
-      await _service.updateReserva(widget.reservationId, {
-        'estado': 'completada',
-        'checkOutEn': FieldValue.serverTimestamp(),
-        'fechaSalidaReal': Timestamp.fromDate(hoy),
-        'nochesReales': nochesReales,
-        'precioBaseRecalculado': precioBaseRecalculado,
-        'totalFinal': totalFinal,
-        'saldoFinal': saldo,
-        if (metodoPagoSaldo != null) 'metodoPagoSaldo': metodoPagoSaldo,
-      });
+    if (confirmed == true) {
+      try {
+        final nuevosConsumos = List.from(consumos)..removeAt(index);
+        await FirebaseFirestore.instance
+            .collection('reservas')
+            .doc(widget.reservationId)
+            .update({
+          'consumos': nuevosConsumos,
+          'actualizadoEn': FieldValue.serverTimestamp(),
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Consumo eliminado'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      } catch (e) {
+        _showErrorDialog('Error al eliminar consumo: ${e.toString()}');
+      }
+    }
+  }
 
-      if (mounted) {
-        await showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16)),
-            title: Row(children: [
-              Icon(Icons.task_alt, color: Colors.blue, size: 28),
-              SizedBox(width: 10),
-              Text('Check-out completado',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-            ]),
-            content: Column(
+  Future<void> _hacerCheckout(Map<String, dynamic> data) async {
+    final fechaEntrada = (data['fechaEntrada'] as Timestamp).toDate();
+    final fechaSalida = (data['fechaSalida'] as Timestamp).toDate();
+    final hoy = DateTime.now();
+    final hoySinHora = DateTime(hoy.year, hoy.month, hoy.day);
+    final entradaSinHora =
+        DateTime(fechaEntrada.year, fechaEntrada.month, fechaEntrada.day);
+    final salidaSinHora =
+        DateTime(fechaSalida.year, fechaSalida.month, fechaSalida.day);
+
+    final nochesOriginales = salidaSinHora.difference(entradaSinHora).inDays;
+    final nochesReales = hoySinHora.difference(entradaSinHora).inDays;
+    final esCheckoutAnticipado =
+        hoySinHora.isBefore(salidaSinHora) && nochesReales > 0;
+
+    double precioBaseRecalculado = 0;
+    double precioBaseOriginal = 0;
+
+    final alojamientos = (data['alojamientos'] as List?) ?? [];
+    for (final aloj in alojamientos) {
+      final totalAloj = (aloj['precioPorAlojamiento'] as num).toDouble();
+      precioBaseOriginal += totalAloj;
+      if (esCheckoutAnticipado && nochesOriginales > 0) {
+        final precioPorNoche = totalAloj / nochesOriginales;
+        precioBaseRecalculado += precioPorNoche * nochesReales;
+      } else {
+        precioBaseRecalculado += totalAloj;
+      }
+    }
+
+    double extrasOriginales = 0;
+    final actividades = (data['actividades'] as List?) ?? [];
+    final alimentos = (data['alimentos'] as List?) ?? [];
+    for (final a in actividades) {
+      extrasOriginales += (a['subtotal'] as num).toDouble();
+    }
+    for (final a in alimentos) {
+      extrasOriginales += (a['subtotal'] as num).toDouble();
+    }
+
+    final consumos = (data['consumos'] as List?) ?? [];
+    final consumosTotal = consumos.fold<double>(
+        0, (sum, c) => sum + ((c['subtotal'] ?? 0) as num).toDouble());
+
+    final abono = (data['abono'] ?? 0).toDouble();
+    final totalFinal = precioBaseRecalculado + extrasOriginales + consumosTotal;
+    final saldo = totalFinal - abono;
+
+    String? metodoPagoSaldo;
+    final List<String> metodosPago = [
+      'Efectivo',
+      'Tarjeta de Crédito',
+      'Tarjeta de Débito',
+      'Transferencia Bancaria',
+      'Depósito',
+      'Otro',
+    ];
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: [
+            Icon(Icons.logout, color: Colors.blue[700], size: 28),
+            SizedBox(width: 10),
+            Text('Confirmar Check-out',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ]),
+          content: SingleChildScrollView(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('La reserva ha sido completada exitosamente.'),
-                SizedBox(height: 12),
-                if (esCheckoutAnticipado)
-                  Padding(
-                    padding: EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      'Estadía recalculada: $nochesReales noches',
-                      style: TextStyle(color: Colors.orange[700]),
-                    ),
-                  ),
-                if (saldo > 0)
-                  Container(
-                    padding: EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.green[50],
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.green),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          Icon(Icons.attach_money, color: Colors.green),
-                          SizedBox(width: 8),
-                          Text(
-                            'Cobrado: \$${saldo.toStringAsFixed(2)}',
-                            style: TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18),
-                          ),
-                        ]),
-                        SizedBox(height: 4),
-                        Text('Método: $metodoPagoSaldo',
-                            style: TextStyle(
-                                color: Colors.grey[700], fontSize: 14)),
-                      ],
-                    ),
-                  )
-                else if (saldo < 0)
+                if (esCheckoutAnticipado) ...[
                   Container(
                     padding: EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -498,21 +301,122 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.orange),
                     ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline,
+                            color: Colors.orange, size: 20),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Check-out anticipado',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.orange[700])),
+                              SizedBox(height: 4),
+                              Text(
+                                'Salida programada: ${DateFormat('dd/MM/yyyy').format(fechaSalida)}\n'
+                                'Salida real: ${DateFormat('dd/MM/yyyy').format(hoy)}\n'
+                                'Noches originales: $nochesOriginales\n'
+                                'Noches reales: $nochesReales',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: 16),
+                ],
+                Text('Resumen final:',
+                    style:
+                        TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                SizedBox(height: 12),
+                _buildResumenFila('Cliente', data['nombre'] ?? 'N/A'),
+                SizedBox(height: 8),
+                if (esCheckoutAnticipado) ...[
+                  _buildResumenFila(
+                    'Alojamiento original',
+                    '\$${precioBaseOriginal.toStringAsFixed(2)}',
+                    color: Colors.grey,
+                  ),
+                  _buildResumenFila(
+                    'Alojamiento recalculado ($nochesReales noches)',
+                    '\$${precioBaseRecalculado.toStringAsFixed(2)}',
+                    color: Colors.green[700],
+                  ),
+                ] else
+                  _buildResumenFila(
+                    'Alojamiento',
+                    '\$${precioBaseOriginal.toStringAsFixed(2)}',
+                  ),
+                if (extrasOriginales > 0)
+                  _buildResumenFila('Actividades/Alimentos reserva',
+                      '\$${extrasOriginales.toStringAsFixed(2)}'),
+                if (consumosTotal > 0)
+                  _buildResumenFila(
+                      'Consumos durante estadía',
+                      '\$${consumosTotal.toStringAsFixed(2)}',
+                      color: Colors.orange),
+                Divider(),
+                _buildResumenFila(
+                    'Total final', '\$${totalFinal.toStringAsFixed(2)}',
+                    bold: true),
+                _buildResumenFila(
+                    'Abono pagado', '\$${abono.toStringAsFixed(2)}'),
+                Divider(),
+                _buildResumenFila(
+                  saldo > 0 ? 'Saldo a cobrar' : 'Devolución al huésped',
+                  '\$${saldo.abs().toStringAsFixed(2)}',
+                  color: saldo > 0 ? Colors.red : Colors.green,
+                  bold: true,
+                ),
+                SizedBox(height: 20),
+                if (saldo > 0) ...[
+                  Text('Método de pago del saldo:',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    value: metodoPagoSaldo,
+                    decoration: InputDecoration(
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                      labelText: 'Seleccione método de pago',
+                      prefixIcon: Icon(Icons.payment),
+                    ),
+                    items: metodosPago
+                        .map((m) => DropdownMenuItem(
+                              value: m,
+                              child: Text(m),
+                            ))
+                        .toList(),
+                    onChanged: (v) =>
+                        setDialogState(() => metodoPagoSaldo = v),
+                  ),
+                ] else if (saldo < 0) ...[
+                  Container(
+                    padding: EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.green[50],
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.green),
+                    ),
                     child: Row(children: [
-                      Icon(Icons.savings, color: Colors.orange),
+                      Icon(Icons.savings, color: Colors.green),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           'Devolver \$${saldo.abs().toStringAsFixed(2)} al huésped',
                           style: TextStyle(
-                              color: Colors.orange[700],
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16),
+                              color: Colors.green, fontWeight: FontWeight.bold),
                         ),
                       ),
                     ]),
-                  )
-                else
+                  ),
+                ] else ...[
                   Container(
                     padding: EdgeInsets.all(12),
                     decoration: BoxDecoration(
@@ -523,38 +427,169 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                     child: Row(children: [
                       Icon(Icons.check_circle, color: Colors.green),
                       SizedBox(width: 8),
-                      Text('Pago completo',
+                      Text('Sin saldo pendiente',
                           style: TextStyle(
                               color: Colors.green,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18)),
+                              fontWeight: FontWeight.bold)),
                     ]),
                   ),
+                ],
               ],
             ),
-            actions: [
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue[700]),
-                onPressed: () {
-                  Navigator.pop(context);
-                  Navigator.pop(context);
-                },
-                child: Text('Finalizar',
-                    style: TextStyle(color: Colors.white)),
-              ),
-            ],
           ),
-        );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text('Cancelar'),
+            ),
+            ElevatedButton(
+              style:
+                  ElevatedButton.styleFrom(backgroundColor: Colors.blue[700]),
+              onPressed: saldo > 0 && metodoPagoSaldo == null
+                  ? null
+                  : () => Navigator.pop(context, true),
+              child: Text('Confirmar Check-out',
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed == true) {
+      setState(() => _isLoading = true);
+      try {
+        await _service.updateReserva(widget.reservationId, {
+          'estado': 'completada',
+          'checkOutEn': FieldValue.serverTimestamp(),
+          'fechaSalidaReal': Timestamp.fromDate(hoy),
+          'nochesReales': nochesReales,
+          'precioBaseRecalculado': precioBaseRecalculado,
+          'totalFinal': totalFinal,
+          'saldoFinal': saldo,
+          if (metodoPagoSaldo != null) 'metodoPagoSaldo': metodoPagoSaldo,
+        });
+
+        if (mounted) {
+          await showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: Row(children: [
+                Icon(Icons.task_alt, color: Colors.blue, size: 28),
+                SizedBox(width: 10),
+                Text('Check-out completado',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ]),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('La reserva ha sido completada exitosamente.'),
+                  SizedBox(height: 12),
+                  if (esCheckoutAnticipado)
+                    Padding(
+                      padding: EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'Estadía recalculada: $nochesReales noches',
+                        style: TextStyle(color: Colors.orange[700]),
+                      ),
+                    ),
+                  if (saldo > 0)
+                    Container(
+                      padding: EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            Icon(Icons.attach_money, color: Colors.green),
+                            SizedBox(width: 8),
+                            Text(
+                              'Cobrado: \$${saldo.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 18),
+                            ),
+                          ]),
+                          SizedBox(height: 4),
+                          Text('Método: $metodoPagoSaldo',
+                              style: TextStyle(
+                                  color: Colors.grey[700], fontSize: 14)),
+                        ],
+                      ),
+                    )
+                  else if (saldo < 0)
+                    Container(
+                      padding: EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange),
+                      ),
+                      child: Row(children: [
+                        Icon(Icons.savings, color: Colors.orange),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Devolver \$${saldo.abs().toStringAsFixed(2)} al huésped',
+                            style: TextStyle(
+                                color: Colors.orange[700],
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16),
+                          ),
+                        ),
+                      ]),
+                    )
+                  else
+                    Container(
+                      padding: EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.green[50],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green),
+                      ),
+                      child: Row(children: [
+                        Icon(Icons.check_circle, color: Colors.green),
+                        SizedBox(width: 8),
+                        Text('Pago completo',
+                            style: TextStyle(
+                                color: Colors.green,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18)),
+                      ]),
+                    ),
+                ],
+              ),
+              actions: [
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue[700]),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    Navigator.pop(context);
+                  },
+                  child: Text('Finalizar',
+                      style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            ),
+          );
+        }
+      } catch (e) {
+        _showErrorDialog('Error al hacer check-out: ${e.toString()}');
+      } finally {
+        setState(() => _isLoading = false);
       }
-    } catch (e) {
-      _showErrorDialog('Error al hacer check-out: ${e.toString()}');
-    } finally {
-      setState(() => _isLoading = false);
     }
   }
-}
- 
+
   void _showErrorDialog(String message) {
     showDialog(
       context: context,
@@ -657,9 +692,8 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                               label: Text(estado.toUpperCase(),
                                   style: TextStyle(
                                       color: Colors.white, fontSize: 11)),
-                              backgroundColor: estado == 'activa'
-                                  ? Colors.teal
-                                  : Colors.blue,
+                              backgroundColor:
+                                  estado == 'activa' ? Colors.teal : Colors.blue,
                             ),
                           ],
                         ),
@@ -675,22 +709,41 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                             'Salida',
                             DateFormat('dd/MM/yyyy').format(
                                 (data['fechaSalida'] as Timestamp).toDate())),
-                        _buildFila(
-                            'Huéspedes',
+                        _buildFila('Huéspedes',
                             '${data['huespedesTotales'] ?? 1}'),
+                        if (data['notas'] != null &&
+                            data['notas'].toString().isNotEmpty) ...[
+                          Divider(),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.notes,
+                                  size: 16, color: Colors.grey[600]),
+                              SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  data['notas'],
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey[700],
+                                      fontStyle: FontStyle.italic),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                         if (data['alojamientos'] != null) ...[
                           Divider(),
                           Text('Alojamientos:',
                               style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   color: Colors.grey[700])),
-                          ...((data['alojamientos'] as List)
-                              .map((a) => Padding(
-                                    padding: EdgeInsets.only(top: 4),
-                                    child: Text(
-                                        '• ${a['alojamientoNombre']} (${a['huespedes']} huéspedes)',
-                                        style: TextStyle(fontSize: 14)),
-                                  ))),
+                          ...((data['alojamientos'] as List).map((a) => Padding(
+                                padding: EdgeInsets.only(top: 4),
+                                child: Text(
+                                    '• ${a['alojamientoNombre']} (${a['huespedes']} huéspedes)',
+                                    style: TextStyle(fontSize: 14)),
+                              ))),
                         ],
                       ],
                     ),
@@ -714,20 +767,13 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                                 fontWeight: FontWeight.bold,
                                 color: Colors.green[700])),
                         Divider(),
-
-                        // Reserva base
-                        _buildFilaCuenta(
-                            'Reserva base', total, Icons.hotel),
-
-                        // Actividades de la reserva original
+                        _buildFilaCuenta('Reserva base', total, Icons.hotel),
                         if (data['actividades'] != null)
                           ...((data['actividades'] as List).map((a) =>
                               _buildFilaCuenta(
                                   '${a['nombre']} (x${a['cantidad']})',
                                   (a['subtotal'] as num).toDouble(),
                                   Icons.sports))),
-
-                        // Alimentos de la reserva original
                         if (data['alimentos'] != null)
                           ...((data['alimentos'] as List).map((a) =>
                               _buildFilaCuenta(
@@ -735,7 +781,7 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                                   (a['subtotal'] as num).toDouble(),
                                   Icons.restaurant))),
 
-                        // Consumos durante la estadía
+                        // ── Consumos durante la estadía CON botón eliminar ──
                         if (consumos.isNotEmpty) ...[
                           SizedBox(height: 8),
                           Text('Consumos durante estadía:',
@@ -743,14 +789,47 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                                   fontWeight: FontWeight.bold,
                                   color: Colors.orange[700])),
                           SizedBox(height: 4),
-                          ...consumos.map((c) => _buildFilaCuenta(
-                                '${c['nombre']} (x${c['cantidad']})',
-                                (c['subtotal'] as num).toDouble(),
-                                c['tipo'] == 'actividad'
-                                    ? Icons.sports
-                                    : Icons.restaurant,
-                                color: Colors.orange,
-                              )),
+                          ...consumos.asMap().entries.map((entry) {
+                            final index = entry.key;
+                            final c = entry.value;
+                            return Padding(
+                              padding: EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    c['tipo'] == 'actividad'
+                                        ? Icons.sports
+                                        : Icons.restaurant,
+                                    size: 18,
+                                    color: Colors.orange,
+                                  ),
+                                  SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      '${c['nombre']} (x${c['cantidad']})',
+                                      style: TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                  Text(
+                                    '\$${(c['subtotal'] as num).toStringAsFixed(2)}',
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                        color: Colors.orange),
+                                  ),
+                                  if (esActiva)
+                                    IconButton(
+                                      icon: Icon(Icons.delete_outline,
+                                          color: Colors.red, size: 20),
+                                      padding: EdgeInsets.zero,
+                                      constraints: BoxConstraints(),
+                                      onPressed: () => _eliminarConsumo(
+                                          index, c, consumos),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }),
                         ],
 
                         Divider(thickness: 2),
@@ -775,8 +854,7 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 22,
-                                  color:
-                                      saldo > 0 ? Colors.red : Colors.green,
+                                  color: saldo > 0 ? Colors.red : Colors.green,
                                 ),
                               ),
                             ],
@@ -796,11 +874,9 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                           fontWeight: FontWeight.bold,
                           color: Colors.green[700])),
                   SizedBox(height: 12),
-
                   if (_isLoadingExtras)
                     Center(child: CircularProgressIndicator())
                   else ...[
-                    // Actividades
                     if (_actividadesDisponibles.isNotEmpty) ...[
                       Text('Actividades',
                           style: TextStyle(
@@ -819,8 +895,8 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                             ),
                             title: Text(d['nombre'],
                                 style: TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle:
-                                Text('\$${(d['precio'] as num).toStringAsFixed(2)} por persona'),
+                            subtitle: Text(
+                                '\$${(d['precio'] as num).toStringAsFixed(2)} por persona'),
                             trailing: IconButton(
                               icon: Icon(Icons.add_circle,
                                   color: Colors.green[700], size: 32),
@@ -835,8 +911,6 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                       }),
                       SizedBox(height: 12),
                     ],
-
-                    // Alimentos
                     if (_alimentosDisponibles.isNotEmpty) ...[
                       Text('Alimentos',
                           style: TextStyle(
@@ -871,10 +945,7 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                       }),
                     ],
                   ],
-
                   SizedBox(height: 20),
-
-                  // Botón checkout
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
@@ -890,7 +961,8 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8)),
                       ),
-                      onPressed: _isLoading ? null : () => _hacerCheckout(data),
+                      onPressed:
+                          _isLoading ? null : () => _hacerCheckout(data),
                     ),
                   ),
                   SizedBox(height: 20),
@@ -909,7 +981,8 @@ Future<void> _hacerCheckout(Map<String, dynamic> data) async {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text('$label:', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+          Text('$label:',
+              style: TextStyle(color: Colors.grey[600], fontSize: 14)),
           Text(value,
               style: TextStyle(fontWeight: FontWeight.normal, fontSize: 14)),
         ],

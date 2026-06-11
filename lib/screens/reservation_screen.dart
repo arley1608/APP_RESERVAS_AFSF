@@ -26,6 +26,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
   final TextEditingController _huespedesController =
       TextEditingController(text: '1');
   final TextEditingController _abonoController = TextEditingController();
+  final TextEditingController _notasController = TextEditingController();
 
   DateTime? _fechaEntrada;
   DateTime? _fechaSalida;
@@ -97,10 +98,9 @@ class _ReservationScreenState extends State<ReservationScreen> {
     _huespedesController.dispose();
     _abonoController.removeListener(_calcularSaldoPendiente);
     _abonoController.dispose();
+    _notasController.dispose();
     super.dispose();
   }
-
-  // ─── Precarga de datos para edición ───────────────────────
 
   void _precargarDatos() async {
     final data = widget.reservationData!;
@@ -111,6 +111,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
     _huespedesController.text = (data['huespedesTotales'] ?? 1).toString();
     _abonoController.text = (data['abono'] ?? 0).toStringAsFixed(2);
     _metodoPagoSeleccionado = data['metodoPago'];
+    _notasController.text = data['notas'] ?? '';
 
     if (data['fechaEntrada'] != null) {
       _fechaEntrada = (data['fechaEntrada'] as Timestamp).toDate();
@@ -119,7 +120,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
       _fechaSalida = (data['fechaSalida'] as Timestamp).toDate();
     }
 
-    // Precargar alojamientos
     if (data['alojamientos'] != null) {
       for (final aloj in data['alojamientos']) {
         final id = aloj['alojamientoId'] as String;
@@ -136,7 +136,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
       }
     }
 
-    // Precargar actividades
     final actividades = data['actividades'] as List? ?? [];
     if (actividades.isNotEmpty) {
       _deseaActividades = true;
@@ -147,7 +146,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
       }
     }
 
-    // Precargar alimentos
     final alimentos = data['alimentos'] as List? ?? [];
     if (alimentos.isNotEmpty) {
       _deseaAlimentos = true;
@@ -167,8 +165,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
       _saldoPendiente = (_precioTotal ?? 0) - (data['abono'] ?? 0);
     });
   }
-
-  // ─── Carga de datos ────────────────────────────────────────
 
   void _calcularSaldoPendiente() {
     final abono = double.tryParse(_abonoController.text) ?? 0;
@@ -225,8 +221,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
     }
   }
 
-  // ─── Selección de alojamientos ─────────────────────────────
-
   void _toggleAlojamientoSeleccionado(DocumentSnapshot alojamiento) {
     if (_alojamientosSeleccionados.length >= 10 &&
         !_alojamientosSeleccionados.containsKey(alojamiento.id)) {
@@ -267,8 +261,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
     });
   }
 
-  // ─── Verificación de disponibilidad ───────────────────────
-
   Future<void> _verificarDisponibilidad() async {
     if (_alojamientosSeleccionados.isEmpty) {
       _mostrarError('Seleccione al menos un alojamiento');
@@ -302,7 +294,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
             .get();
 
         for (final doc in query.docs) {
-          // En edición, ignorar la propia reserva
           if (_esEdicion && doc.id == widget.reservationId) continue;
 
           final reserva = doc.data();
@@ -346,8 +337,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
     }
   }
 
-  // ─── Cálculo de precio ─────────────────────────────────────
-
   double? _calcularPrecioTotal() {
     if (_fechaEntrada == null || _fechaSalida == null) return null;
     final numNoches = _fechaSalida!.difference(_fechaEntrada!).inDays;
@@ -388,9 +377,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
     return total;
   }
 
-  // ─── Guardar reserva (crear o editar) ─────────────────────
-
-Future<void> _guardarReserva() async {
+  Future<void> _guardarReserva() async {
     if (!_formKey.currentState!.validate()) return;
     if (_fechaEntrada == null || _fechaSalida == null) {
       _mostrarError('Seleccione las fechas de entrada y salida');
@@ -430,6 +417,7 @@ Future<void> _guardarReserva() async {
         'huespedesTotales': int.tryParse(_huespedesController.text) ?? 1,
         'fechaEntrada': Timestamp.fromDate(_fechaEntrada!),
         'fechaSalida': Timestamp.fromDate(_fechaSalida!),
+        'notas': _notasController.text.trim(),
         'alojamientos': _alojamientosSeleccionados.entries.map((entry) {
           final alojamiento = entry.value['doc'] as DocumentSnapshot;
           final huespedes = entry.value['huespedes'] as int;
@@ -572,7 +560,6 @@ Future<void> _guardarReserva() async {
       setState(() => _isLoadingReserva = false);
     }
   }
-  // ─── Selección de fechas ───────────────────────────────────
 
   Future<void> _seleccionarFecha(bool esEntrada) async {
     final fechaSeleccionada = await showDatePicker(
@@ -616,8 +603,6 @@ Future<void> _guardarReserva() async {
       });
     }
   }
-
-  // ─── Helpers ───────────────────────────────────────────────
 
   List<DocumentSnapshot> _filtrarAlojamientos() {
     if (_tipoAlojamientoSeleccionado == null) return [];
@@ -670,8 +655,6 @@ Future<void> _guardarReserva() async {
       ),
     );
   }
-
-  // ─── Widgets auxiliares ────────────────────────────────────
 
   Widget _buildHuespedesCounter(
       String alojamientoId, int currentValue, int capacidadMaxima) {
@@ -756,8 +739,6 @@ Future<void> _guardarReserva() async {
     );
   }
 
-  // ─── Build ─────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     final alojamientosFiltrados = _filtrarAlojamientos();
@@ -823,6 +804,19 @@ Future<void> _guardarReserva() async {
                         validator: (value) =>
                             value!.length < 8 ? 'Mínimo 8 caracteres' : null,
                       ),
+                      SizedBox(height: 16),
+                      TextFormField(
+                        controller: _notasController,
+                        decoration: InputDecoration(
+                          labelText: 'Notas u observaciones',
+                          hintText:
+                              'Ej: viene con mascota, requiere cuna, alérgico a...',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.notes),
+                        ),
+                        maxLines: 3,
+                        maxLength: 300,
+                      ),
                     ]),
                     SizedBox(height: 20),
 
@@ -839,8 +833,8 @@ Future<void> _guardarReserva() async {
                       ),
                       SizedBox(height: 16),
                       ListTile(
-                        leading:
-                            Icon(Icons.calendar_today, color: Colors.green[700]),
+                        leading: Icon(Icons.calendar_today,
+                            color: Colors.green[700]),
                         title: Text('Fecha de Entrada'),
                         subtitle: Text(_fechaEntrada == null
                             ? 'Seleccionar fecha'
@@ -850,8 +844,8 @@ Future<void> _guardarReserva() async {
                       ),
                       Divider(),
                       ListTile(
-                        leading:
-                            Icon(Icons.calendar_today, color: Colors.green[700]),
+                        leading: Icon(Icons.calendar_today,
+                            color: Colors.green[700]),
                         title: Text('Fecha de Salida'),
                         subtitle: Text(_fechaSalida == null
                             ? 'Seleccionar fecha'
@@ -1072,7 +1066,8 @@ Future<void> _guardarReserva() async {
                         SizedBox(height: 10),
                         _buildSiNo(
                           valor: _deseaActividades,
-                          onSi: () => setState(() => _deseaActividades = true),
+                          onSi: () =>
+                              setState(() => _deseaActividades = true),
                           onNo: () => setState(() {
                             _deseaActividades = false;
                             _actividadesSeleccionadas.clear();
@@ -1116,8 +1111,8 @@ Future<void> _guardarReserva() async {
                                       _actividadesSeleccionadas
                                           .remove(actividad.id);
                                     } else {
-                                      _actividadesSeleccionadas[actividad.id] =
-                                          1;
+                                      _actividadesSeleccionadas[
+                                          actividad.id] = 1;
                                     }
                                     _precioTotal = _calcularPrecioTotal();
                                     _calcularSaldoPendiente();
@@ -1174,7 +1169,8 @@ Future<void> _guardarReserva() async {
                         SizedBox(height: 10),
                         _buildSiNo(
                           valor: _deseaAlimentos,
-                          onSi: () => setState(() => _deseaAlimentos = true),
+                          onSi: () =>
+                              setState(() => _deseaAlimentos = true),
                           onNo: () => setState(() {
                             _deseaAlimentos = false;
                             _alimentosSeleccionados.clear();
@@ -1218,7 +1214,8 @@ Future<void> _guardarReserva() async {
                                       _alimentosSeleccionados
                                           .remove(alimento.id);
                                     } else {
-                                      _alimentosSeleccionados[alimento.id] = 1;
+                                      _alimentosSeleccionados[alimento.id] =
+                                          1;
                                     }
                                     _precioTotal = _calcularPrecioTotal();
                                     _calcularSaldoPendiente();
@@ -1337,10 +1334,11 @@ Future<void> _guardarReserva() async {
                               Padding(
                                 padding: EdgeInsets.symmetric(vertical: 8),
                                 child: Text(data['nombre'],
-                                    style:
-                                        TextStyle(fontWeight: FontWeight.bold)),
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.bold)),
                               ),
-                              _buildResumenFila('Huéspedes:', '$huespedes'),
+                              _buildResumenFila(
+                                  'Huéspedes:', '$huespedes'),
                               _buildResumenFila('Precio/noche:',
                                   '\$${(precio * huespedes).toStringAsFixed(2)}'),
                               _buildResumenFila('Total alojamiento:',
@@ -1409,15 +1407,35 @@ Future<void> _guardarReserva() async {
                       _buildResumenFila(
                         'Saldo Pendiente:',
                         '\$${_saldoPendiente.toStringAsFixed(2)}',
-                        color: _saldoPendiente > 0 ? Colors.red : Colors.green,
+                        color:
+                            _saldoPendiente > 0 ? Colors.red : Colors.green,
                       ),
                       if (_metodoPagoSeleccionado != null)
                         _buildResumenFila(
                             'Método de pago:', _metodoPagoSeleccionado!),
+                      if (_notasController.text.isNotEmpty) ...[
+                        Divider(),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(Icons.notes,
+                                size: 16, color: Colors.grey[600]),
+                            SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                _notasController.text,
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: Colors.grey[700],
+                                    fontStyle: FontStyle.italic),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ]),
                     SizedBox(height: 20),
 
-                    // Botón confirmar / guardar
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
@@ -1513,8 +1531,7 @@ Future<void> _guardarReserva() async {
         children: [
           Text(label, style: TextStyle(color: Colors.grey[600])),
           Text(value,
-              style: TextStyle(
-                  fontWeight: FontWeight.bold, color: color)),
+              style: TextStyle(fontWeight: FontWeight.bold, color: color)),
         ],
       ),
     );

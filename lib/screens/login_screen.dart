@@ -35,7 +35,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
       User? user = userCredential.user;
       if (user != null) {
-        // Verificar que el usuario esté activo
+        // Primero obtener rol — ya usa sesión autenticada
+        String? rol = await _userService.getUserRole(user.uid);
+
+        if (rol == null) {
+          await FirebaseAuth.instance.signOut();
+          if (mounted) {
+            _mostrarError(
+                "Tu cuenta no está registrada. Contacta a un administrador.");
+          }
+          return;
+        }
+
+        // Luego verificar que esté activo
         final userDoc = await FirebaseFirestore.instance
             .collection('usuarios')
             .doc(user.uid)
@@ -44,32 +56,25 @@ class _LoginScreenState extends State<LoginScreen> {
         if (userDoc.exists) {
           final userData = userDoc.data() as Map<String, dynamic>;
           if (userData['activo'] == false) {
-            _mostrarError(
-                "Tu cuenta ha sido desactivada. Contacta al administrador.");
             await FirebaseAuth.instance.signOut();
+            if (mounted) {
+              _mostrarError(
+                  "Tu cuenta ha sido desactivada. Contacta al administrador.");
+            }
             return;
           }
-        }
-
-        // Obtener rol
-        String? rol = await _userService.getUserRole(user.uid);
-
-        if (rol == null) {
-          _mostrarError(
-              "Tu cuenta no está registrada. Contacta a un administrador.");
-          await FirebaseAuth.instance.signOut();
-          return;
         }
 
         if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => DashboardScreen(rol: rol)),
+            MaterialPageRoute(
+                builder: (context) => DashboardScreen(rol: rol)),
           );
         }
       }
     } catch (e) {
-      _mostrarError(_getFirebaseErrorMessage(e.toString()));
+      if (mounted) _mostrarError(_getFirebaseErrorMessage(e.toString()));
     } finally {
       if (mounted) setState(() => loading = false);
     }
@@ -110,10 +115,15 @@ class _LoginScreenState extends State<LoginScreen> {
       return "La contraseña es incorrecta.";
     } else if (error.contains('invalid-email')) {
       return "El formato del correo no es válido.";
+    } else if (error.contains('invalid-credential')) {
+      return "Correo o contraseña incorrectos.";
     } else if (error.contains('too-many-requests')) {
       return "Has intentado demasiadas veces. Intenta más tarde.";
+    } else if (error.contains('permission-denied') ||
+        error.contains('does not have permission')) {
+      return "Error de permisos. Contacta al administrador.";
     } else {
-      return "Error desconocido. Inténtalo de nuevo.";
+      return "Error: ${error}";
     }
   }
 
@@ -170,7 +180,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     decoration: InputDecoration(
                                       labelText: "Correo Electrónico",
                                       border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius:
+                                            BorderRadius.circular(12),
                                       ),
                                       prefixIcon: Icon(Icons.email,
                                           color: Colors.green),
@@ -194,7 +205,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                     decoration: InputDecoration(
                                       labelText: "Contraseña",
                                       border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius:
+                                            BorderRadius.circular(12),
                                       ),
                                       prefixIcon: Icon(Icons.lock,
                                           color: Colors.green),
@@ -247,7 +259,8 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Text(
                 "© 2025 AgroFinca San Felipe SAS. Todos los derechos reservados.",
                 style: TextStyle(
-                    fontSize: 14, color: Colors.white.withOpacity(0.8)),
+                    fontSize: 14,
+                    color: Colors.white.withOpacity(0.8)),
               ),
             ),
           ],
