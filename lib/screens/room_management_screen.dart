@@ -16,7 +16,10 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
   String selectedTipo = "Habitación Superior";
   String? editingId;
 
-  final List<String> roomTypes = [
+  // Ya no es "final": si un registro trae un tipo que no está en esta
+  // lista (dato legado, typo, etc.), lo agregamos dinámicamente para
+  // que el Dropdown no truene al editar.
+  List<String> roomTypes = [
     "Habitación Superior",
     "Habitación Standard",
     "Cabaña",
@@ -25,6 +28,15 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     "Zona de Camping con Carpa",
     "Hamaca",
   ];
+
+  @override
+  void dispose() {
+    nombreController.dispose();
+    precioController.dispose();
+    capacidadController.dispose();
+    descripcionController.dispose();
+    super.dispose();
+  }
 
   void _showSuccessDialog(String message) => _showDialog(
       title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
@@ -132,7 +144,14 @@ class _RoomManagementScreenState extends State<RoomManagementScreen> {
     setState(() {
       editingId = id;
       nombreController.text = data['nombre'];
-      selectedTipo = data['tipo'];
+      // Si el tipo guardado no está en la lista predefinida (dato legado,
+      // typo, o creado antes de agregar/quitar categorías), lo agregamos
+      // dinámicamente para que el Dropdown no truene con un assertion error.
+      final tipoGuardado = data['tipo']?.toString() ?? roomTypes.first;
+      if (!roomTypes.contains(tipoGuardado)) {
+        roomTypes.add(tipoGuardado);
+      }
+      selectedTipo = tipoGuardado;
       precioController.text = data['precio'].toString();
       capacidadController.text = data['capacidad'].toString();
       descripcionController.text = data['descripcion'];

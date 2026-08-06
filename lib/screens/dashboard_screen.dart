@@ -20,7 +20,24 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    if (currentUser == null) {
+      // La sesión se perdió justo al construir esta pantalla (token
+      // expirado, sign-out en otra pestaña, etc.). En vez de crashear
+      // con un unwrap forzado, regresamos a login de forma segura.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => LoginScreen()),
+        );
+      });
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final uid = currentUser.uid;
     final firestoreService = FirestoreService();
 
     return Scaffold(

@@ -15,9 +15,20 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
   String selectedTipo = "Desayuno";
   String? editingId;
 
-  final List<String> foodTypes = [
+  // Ya no es "final": si un registro trae un tipo que no está en esta
+  // lista (dato legado, typo, etc.), lo agregamos dinámicamente para
+  // que el Dropdown no truene al editar.
+  List<String> foodTypes = [
     "Desayuno", "Almuerzo", "Cena", "Bebida", "Snack", "Postre", "Especial"
   ];
+
+  @override
+  void dispose() {
+    nombreController.dispose();
+    precioController.dispose();
+    descripcionController.dispose();
+    super.dispose();
+  }
 
   void _showSuccessDialog(String message) => _showDialog(
       title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
@@ -123,7 +134,14 @@ class _FoodManagementScreenState extends State<FoodManagementScreen> {
     setState(() {
       editingId = id;
       nombreController.text = data['nombre'];
-      selectedTipo = data['tipo'];
+      // Si el tipo guardado no está en la lista predefinida (dato legado,
+      // typo, o creado antes de agregar/quitar categorías), lo agregamos
+      // dinámicamente para que el Dropdown no truene con un assertion error.
+      final tipoGuardado = data['tipo']?.toString() ?? foodTypes.first;
+      if (!foodTypes.contains(tipoGuardado)) {
+        foodTypes.add(tipoGuardado);
+      }
+      selectedTipo = tipoGuardado;
       precioController.text = data['precio'].toString();
       descripcionController.text = data['descripcion'];
     });

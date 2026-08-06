@@ -15,6 +15,14 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
   final TextEditingController descripcionController = TextEditingController();
   String? editingId;
 
+  @override
+  void dispose() {
+    nombreController.dispose();
+    precioController.dispose();
+    descripcionController.dispose();
+    super.dispose();
+  }
+
   void _showSuccessDialog(String message) => _showDialog(
       title: "Éxito", message: message, icon: Icons.check_circle, iconColor: Colors.green);
 

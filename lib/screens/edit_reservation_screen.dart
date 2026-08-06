@@ -195,6 +195,11 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
     return 'N/A';
   }
 
+  // Corta el ID de forma segura: los IDs autogenerados de Firestore
+  // siempre tienen 20+ caracteres, pero por si algún día se usan IDs
+  // personalizados más cortos, evitamos un RangeError.
+  String _idCorto(String id) => id.length >= 8 ? id.substring(0, 8) : id;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -336,7 +341,7 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Reserva #${reservationId.substring(0, 8)}',
+                  'Reserva #${_idCorto(reservationId)}',
                   style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -379,7 +384,7 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
 
             // Método de pago
             if (data['metodoPago'] != null)
-              _buildInfoRow('Método de pago', data['metodoPago']),
+              _buildInfoRow('Método de pago', data['metodoPago'].toString()),
 
             // Notas si las hay
             if (data['notas'] != null &&
@@ -473,7 +478,7 @@ class _EditReservationScreenState extends State<EditReservationScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Reserva #${reservationId.substring(0, 8)}',
+                  'Reserva #${_idCorto(reservationId)}',
                   style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,

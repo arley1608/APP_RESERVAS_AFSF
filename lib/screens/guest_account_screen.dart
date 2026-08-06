@@ -230,8 +230,15 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
 
     final nochesOriginales = salidaSinHora.difference(entradaSinHora).inDays;
     final nochesReales = hoySinHora.difference(entradaSinHora).inDays;
-    final esCheckoutAnticipado =
-        hoySinHora.isBefore(salidaSinHora) && nochesReales > 0;
+
+    // Se cobra únicamente por las noches efectivamente usadas, sea
+    // menos (checkout anticipado, incluyendo mismo día = 0 noches) o
+    // más (checkout tardío = noches extra al mismo precio por noche).
+    final nochesCobradas = nochesReales;
+    final esCheckoutAnticipado = hoySinHora.isBefore(salidaSinHora);
+    final esCheckoutTardio = hoySinHora.isAfter(salidaSinHora);
+    final nochesExtra = esCheckoutTardio ? nochesReales - nochesOriginales : 0;
+    final huboCambioDeFechas = esCheckoutAnticipado || esCheckoutTardio;
 
     double precioBaseRecalculado = 0;
     double precioBaseOriginal = 0;
@@ -240,9 +247,9 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
     for (final aloj in alojamientos) {
       final totalAloj = (aloj['precioPorAlojamiento'] as num).toDouble();
       precioBaseOriginal += totalAloj;
-      if (esCheckoutAnticipado && nochesOriginales > 0) {
+      if (huboCambioDeFechas && nochesOriginales > 0) {
         final precioPorNoche = totalAloj / nochesOriginales;
-        precioBaseRecalculado += precioPorNoche * nochesReales;
+        precioBaseRecalculado += precioPorNoche * nochesCobradas;
       } else {
         precioBaseRecalculado += totalAloj;
       }
@@ -293,34 +300,48 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (esCheckoutAnticipado) ...[
+                if (huboCambioDeFechas) ...[
                   Container(
                     padding: EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Colors.orange[50],
+                      color: esCheckoutTardio
+                          ? Colors.red[50]
+                          : Colors.orange[50],
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.orange),
+                      border: Border.all(
+                          color: esCheckoutTardio
+                              ? Colors.red
+                              : Colors.orange),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Icon(Icons.info_outline,
-                            color: Colors.orange, size: 20),
+                            color: esCheckoutTardio
+                                ? Colors.red
+                                : Colors.orange,
+                            size: 20),
                         SizedBox(width: 8),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Check-out anticipado',
+                              Text(
+                                  esCheckoutTardio
+                                      ? 'Check-out tardío'
+                                      : 'Check-out anticipado',
                                   style: TextStyle(
                                       fontWeight: FontWeight.bold,
-                                      color: Colors.orange[700])),
+                                      color: esCheckoutTardio
+                                          ? Colors.red[700]
+                                          : Colors.orange[700])),
                               SizedBox(height: 4),
                               Text(
                                 'Salida programada: ${DateFormat('dd/MM/yyyy').format(fechaSalida)}\n'
                                 'Salida real: ${DateFormat('dd/MM/yyyy').format(hoy)}\n'
                                 'Noches originales: $nochesOriginales\n'
-                                'Noches reales: $nochesReales',
+                                'Noches cobradas: $nochesCobradas'
+                                '${esCheckoutTardio ? ' ($nochesExtra noche${nochesExtra == 1 ? '' : 's'} extra)' : ''}',
                                 style: TextStyle(fontSize: 13),
                               ),
                             ],
@@ -337,16 +358,17 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
                 SizedBox(height: 12),
                 _buildResumenFila('Cliente', data['nombre'] ?? 'N/A'),
                 SizedBox(height: 8),
-                if (esCheckoutAnticipado) ...[
+                if (huboCambioDeFechas) ...[
                   _buildResumenFila(
                     'Alojamiento original',
                     '\$${precioBaseOriginal.toStringAsFixed(2)}',
                     color: Colors.grey,
                   ),
                   _buildResumenFila(
-                    'Alojamiento recalculado ($nochesReales noches)',
+                    'Alojamiento recalculado ($nochesCobradas noche${nochesCobradas == 1 ? '' : 's'})',
                     '\$${precioBaseRecalculado.toStringAsFixed(2)}',
-                    color: Colors.green[700],
+                    color:
+                        esCheckoutTardio ? Colors.red[700] : Colors.green[700],
                   ),
                 ] else
                   _buildResumenFila(
@@ -464,6 +486,8 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
           'checkOutEn': FieldValue.serverTimestamp(),
           'fechaSalidaReal': Timestamp.fromDate(hoy),
           'nochesReales': nochesReales,
+          'nochesCobradas': nochesCobradas,
+          'nochesExtra': nochesExtra,
           'precioBaseRecalculado': precioBaseRecalculado,
           'totalFinal': totalFinal,
           'saldoFinal': saldo,
@@ -488,12 +512,15 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
                 children: [
                   Text('La reserva ha sido completada exitosamente.'),
                   SizedBox(height: 12),
-                  if (esCheckoutAnticipado)
+                  if (huboCambioDeFechas)
                     Padding(
                       padding: EdgeInsets.only(bottom: 8),
                       child: Text(
-                        'Estadía recalculada: $nochesReales noches',
-                        style: TextStyle(color: Colors.orange[700]),
+                        'Estadía recalculada: $nochesCobradas noche${nochesCobradas == 1 ? '' : 's'} cobrada${nochesCobradas == 1 ? '' : 's'}',
+                        style: TextStyle(
+                            color: esCheckoutTardio
+                                ? Colors.red[700]
+                                : Colors.orange[700]),
                       ),
                     ),
                   if (saldo > 0)

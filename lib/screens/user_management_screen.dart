@@ -14,6 +14,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
   String rolSeleccionado = "operador";
   bool isLoading = false;
 
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    nombreController.dispose();
+    super.dispose();
+  }
+
   Future<void> _createUser() async {
     if (nombreController.text.isEmpty ||
         emailController.text.isEmpty ||

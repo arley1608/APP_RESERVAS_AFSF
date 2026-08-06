@@ -110,7 +110,13 @@ class _ReservationScreenState extends State<ReservationScreen> {
     _telefonoController.text = data['telefono'] ?? '';
     _huespedesController.text = (data['huespedesTotales'] ?? 1).toString();
     _abonoController.text = (data['abono'] ?? 0).toStringAsFixed(2);
-    _metodoPagoSeleccionado = data['metodoPago'];
+    // Si el método de pago guardado no está en la lista actual (dato
+    // legado, cambio de nombre, etc.), lo dejamos en null para que el
+    // Dropdown no truene — el usuario simplemente tendrá que
+    // reseleccionarlo en vez de que la pantalla crashee.
+    final metodoPagoGuardado = data['metodoPago'];
+    _metodoPagoSeleccionado =
+        _metodosPago.contains(metodoPagoGuardado) ? metodoPagoGuardado : null;
     _notasController.text = data['notas'] ?? '';
 
     if (data['fechaEntrada'] != null) {
@@ -131,7 +137,9 @@ class _ReservationScreenState extends State<ReservationScreen> {
             'doc': doc,
             'huespedes': aloj['huespedes'] ?? 1,
           };
-          _tipoAlojamientoSeleccionado = aloj['tipoAlojamiento'];
+          final tipoGuardado = aloj['tipoAlojamiento'];
+          _tipoAlojamientoSeleccionado =
+              _tiposAlojamiento.contains(tipoGuardado) ? tipoGuardado : null;
         } catch (_) {}
       }
     }
@@ -287,28 +295,47 @@ class _ReservationScreenState extends State<ReservationScreen> {
 
     try {
       bool todosDisponibles = true;
-      for (final alojamientoId in _alojamientosSeleccionados.keys) {
-        final query = await FirebaseFirestore.instance
-            .collection('reservas')
-            .where('alojamientos.alojamientoId', isEqualTo: alojamientoId)
-            .get();
 
-        for (final doc in query.docs) {
-          if (_esEdicion && doc.id == widget.reservationId) continue;
+      // NOTA: Firestore no permite filtrar por un subcampo dentro de un
+      // array de mapas (ej. 'alojamientos.alojamientoId'), así que traemos
+      // las reservas que podrían chocar (no canceladas) y comparamos en
+      // Dart. Es además más eficiente: antes se hacía una consulta por
+      // cada alojamiento seleccionado; ahora se hace una sola.
+      final query = await FirebaseFirestore.instance
+          .collection('reservas')
+          .where('estado', whereIn: ['pendiente', 'confirmada', 'activa'])
+          .get();
 
-          final reserva = doc.data();
-          final reservaEntrada =
-              (reserva['fechaEntrada'] as Timestamp).toDate();
-          final reservaSalida =
-              (reserva['fechaSalida'] as Timestamp).toDate();
+      final idsSeleccionados = _alojamientosSeleccionados.keys.toSet();
 
-          if (_fechaEntrada!.isBefore(reservaSalida) &&
-              _fechaSalida!.isAfter(reservaEntrada)) {
-            todosDisponibles = false;
-            break;
-          }
+      for (final doc in query.docs) {
+        if (_esEdicion && doc.id == widget.reservationId) continue;
+
+        final reserva = doc.data();
+        if (reserva['fechaEntrada'] == null || reserva['fechaSalida'] == null) {
+          continue;
         }
-        if (!todosDisponibles) break;
+
+        final reservaEntrada = (reserva['fechaEntrada'] as Timestamp).toDate();
+        final reservaSalida = (reserva['fechaSalida'] as Timestamp).toDate();
+
+        final seCruzanFechas = _fechaEntrada!.isBefore(reservaSalida) &&
+            _fechaSalida!.isAfter(reservaEntrada);
+        if (!seCruzanFechas) continue;
+
+        final alojamientosDeEsaReserva =
+            (reserva['alojamientos'] as List?) ?? [];
+        final idsOcupadosEnEsaReserva = alojamientosDeEsaReserva
+            .map((a) => (a as Map<String, dynamic>)['alojamientoId'])
+            .toSet();
+
+        final hayConflicto =
+            idsSeleccionados.any((id) => idsOcupadosEnEsaReserva.contains(id));
+
+        if (hayConflicto) {
+          todosDisponibles = false;
+          break;
+        }
       }
 
       setState(() {

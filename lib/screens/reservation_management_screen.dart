@@ -45,6 +45,11 @@ class _ReservationManagementScreenState
     super.dispose();
   }
 
+  // Corta el ID de forma segura: los IDs autogenerados de Firestore
+  // siempre tienen 20+ caracteres, pero por si algún día se usan IDs
+  // personalizados más cortos, evitamos un RangeError.
+  String _idCorto(String id) => id.length >= 8 ? id.substring(0, 8) : id;
+
   Future<void> _hacerCheckin(String reservationId, Map<String, dynamic> data) async {
     final fechaEntrada = (data['fechaEntrada'] as Timestamp).toDate();
     final hoy = DateTime.now();
@@ -551,7 +556,7 @@ class _ReservationManagementScreenState
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Reserva #${reservationId.substring(0, 8)}',
+                  'Reserva #${_idCorto(reservationId)}',
                   style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,

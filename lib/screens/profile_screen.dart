@@ -22,6 +22,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _loadUserData();
   }
 
+  @override
+  void dispose() {
+    nameController.dispose();
+    oldPasswordController.dispose();
+    newPasswordController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadUserData() async {
     User? user = FirebaseAuth.instance.currentUser;
     if (user != null) {
