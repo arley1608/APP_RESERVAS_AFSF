@@ -944,32 +944,7 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
                               fontWeight: FontWeight.bold,
                               color: Colors.grey[700])),
                       SizedBox(height: 8),
-                      ..._alimentosDisponibles.map((doc) {
-                        final d = doc.data() as Map<String, dynamic>;
-                        return Card(
-                          margin: EdgeInsets.only(bottom: 8),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.orange[50],
-                              child: Icon(Icons.restaurant,
-                                  color: Colors.orange[700]),
-                            ),
-                            title: Text(d['nombre'],
-                                style: TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Text(
-                                '\$${(d['precio'] as num).toStringAsFixed(2)} por servicio'),
-                            trailing: IconButton(
-                              icon: Icon(Icons.add_circle,
-                                  color: Colors.orange[700], size: 32),
-                              onPressed: () => _agregarConsumo(
-                                  'alimento',
-                                  doc.id,
-                                  d['nombre'],
-                                  (d['precio'] as num).toDouble()),
-                            ),
-                          ),
-                        );
-                      }),
+                      ..._buildAlimentosAgrupadosConsumo(),
                     ],
                   ],
                   SizedBox(height: 20),
@@ -1015,6 +990,90 @@ class _GuestAccountScreenState extends State<GuestAccountScreen> {
         ],
       ),
     );
+  }
+
+  IconData _iconoTipoAlimento(String? tipo) {
+    switch (tipo) {
+      case 'Desayuno':
+        return Icons.free_breakfast;
+      case 'Almuerzo':
+        return Icons.lunch_dining;
+      case 'Cena':
+        return Icons.dinner_dining;
+      case 'Bebida':
+        return Icons.local_bar;
+      case 'Snack':
+        return Icons.cookie;
+      case 'Postre':
+        return Icons.icecream;
+      case 'Especial':
+        return Icons.star;
+      default:
+        return Icons.restaurant_menu;
+    }
+  }
+
+  static const List<String> _ordenTiposAlimento = [
+    "Desayuno", "Almuerzo", "Cena", "Bebida", "Snack", "Postre", "Especial",
+  ];
+
+  // Agrupa los alimentos disponibles por tipo (mismo orden del
+  // catálogo), con un encabezado por grupo, para que el recepcionista
+  // encuentre rápido lo que busca al agregar un consumo.
+  List<Widget> _buildAlimentosAgrupadosConsumo() {
+    final Map<String, List<QueryDocumentSnapshot>> grupos = {};
+    for (final doc in _alimentosDisponibles) {
+      final data = doc.data() as Map<String, dynamic>;
+      final tipo = data['tipo']?.toString() ?? 'Otros';
+      grupos.putIfAbsent(tipo, () => []).add(doc);
+    }
+
+    final tiposOrdenados = [
+      ..._ordenTiposAlimento.where(grupos.containsKey),
+      ...grupos.keys.where((t) => !_ordenTiposAlimento.contains(t)),
+    ];
+
+    final widgets = <Widget>[];
+    for (final tipo in tiposOrdenados) {
+      widgets.add(Padding(
+        padding: EdgeInsets.only(top: 8, bottom: 4),
+        child: Row(
+          children: [
+            Icon(_iconoTipoAlimento(tipo), size: 16, color: Colors.orange[700]),
+            SizedBox(width: 6),
+            Text(tipo,
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: Colors.orange[700])),
+          ],
+        ),
+      ));
+      for (final doc in grupos[tipo]!) {
+        final d = doc.data() as Map<String, dynamic>;
+        widgets.add(Card(
+          margin: EdgeInsets.only(bottom: 8),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: Colors.orange[50],
+              child: Icon(_iconoTipoAlimento(d['tipo']),
+                  color: Colors.orange[700]),
+            ),
+            title: Text(d['nombre'],
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+                '\$${(d['precio'] as num).toStringAsFixed(2)} por servicio'),
+            trailing: IconButton(
+              icon: Icon(Icons.add_circle,
+                  color: Colors.orange[700], size: 32),
+              onPressed: () => _agregarConsumo('alimento', doc.id,
+                  d['nombre'], (d['precio'] as num).toDouble()),
+            ),
+          ),
+        ));
+      }
+    }
+    return widgets;
   }
 
   Widget _buildFilaCuenta(String label, double valor, IconData icon,

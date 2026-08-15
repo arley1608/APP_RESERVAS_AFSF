@@ -64,15 +64,28 @@ class _ReservationScreenState extends State<ReservationScreen> {
   ];
   double _saldoPendiente = 0;
 
-  final List<String> _tiposAlojamiento = [
+  // Reemplaza a la antigua "_tiposAlojamiento" plana. Ahora se agrupan
+  // en dos categorías: Alojamiento rural (habitación/cabaña/apto/hamaca)
+  // y Zona de camping (con o sin equipo, manejados aparte más abajo).
+  final List<String> _tiposRural = [
     "Habitación Superior",
     "Habitación Standard",
     "Cabaña",
     "Apartamento",
-    "Zona de Camping",
-    "Zona de Camping con Carpa",
     "Hamaca",
   ];
+  static const String _tipoCampingConEquipo = "Zona de Camping con Carpa";
+  static const String _tipoCampingSinEquipo = "Zona de Camping";
+
+  // 'rural' | 'camping' | null (nada elegido aún)
+  String? _categoriaAlojamiento;
+  // 'hospedaje' | 'pasadia'
+  String _tipoReserva = 'hospedaje';
+  TimeOfDay? _horaEntradaPasadia;
+  TimeOfDay? _horaSalidaPasadia;
+  // 'ninguno' | 'porcentaje' | 'fijo'
+  String _tipoDescuento = 'ninguno';
+  final TextEditingController _descuentoController = TextEditingController();
 
   List<DocumentSnapshot> _listaAlojamientosDisponibles = [];
   final _formKey = GlobalKey<FormState>();
@@ -99,6 +112,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
     _abonoController.removeListener(_calcularSaldoPendiente);
     _abonoController.dispose();
     _notasController.dispose();
+    _descuentoController.dispose();
     super.dispose();
   }
 
@@ -112,8 +126,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
     _abonoController.text = (data['abono'] ?? 0).toStringAsFixed(2);
     // Si el método de pago guardado no está en la lista actual (dato
     // legado, cambio de nombre, etc.), lo dejamos en null para que el
-    // Dropdown no truene — el usuario simplemente tendrá que
-    // reseleccionarlo en vez de que la pantalla crashee.
+    // Dropdown no truene — el usuario simplemente lo reselecciona.
     final metodoPagoGuardado = data['metodoPago'];
     _metodoPagoSeleccionado =
         _metodosPago.contains(metodoPagoGuardado) ? metodoPagoGuardado : null;
@@ -138,9 +151,33 @@ class _ReservationScreenState extends State<ReservationScreen> {
             'huespedes': aloj['huespedes'] ?? 1,
           };
           final tipoGuardado = aloj['tipoAlojamiento'];
+          final tiposConocidos = [
+            ..._tiposRural,
+            _tipoCampingConEquipo,
+            _tipoCampingSinEquipo,
+          ];
           _tipoAlojamientoSeleccionado =
-              _tiposAlojamiento.contains(tipoGuardado) ? tipoGuardado : null;
+              tiposConocidos.contains(tipoGuardado) ? tipoGuardado : null;
+          // Inferimos la categoría (rural/camping) a partir del tipo
+          // guardado, para que la pantalla de edición abra ya en la
+          // opción correcta.
+          if (_tipoAlojamientoSeleccionado == _tipoCampingConEquipo ||
+              _tipoAlojamientoSeleccionado == _tipoCampingSinEquipo) {
+            _categoriaAlojamiento = 'camping';
+          } else if (_tipoAlojamientoSeleccionado != null) {
+            _categoriaAlojamiento = 'rural';
+          }
         } catch (_) {}
+      }
+    }
+
+    _tipoReserva = data['tipoReserva'] ?? 'hospedaje';
+    if (_tipoReserva == 'pasadia') {
+      if (_fechaEntrada != null) {
+        _horaEntradaPasadia = TimeOfDay.fromDateTime(_fechaEntrada!);
+      }
+      if (_fechaSalida != null) {
+        _horaSalidaPasadia = TimeOfDay.fromDateTime(_fechaSalida!);
       }
     }
 
@@ -295,6 +332,33 @@ class _ReservationScreenState extends State<ReservationScreen> {
 
     try {
       bool todosDisponibles = true;
+      String? motivoNoDisponible;
+
+      // Separamos los alojamientos seleccionados en dos grupos:
+      // - "unidad": habitación, cabaña, carpa con equipo — una sola
+      //   reserva ocupa por completo la unidad (chequeo binario).
+      // - "por cupo": ej. Zona de Camping sin equipo — admite varias
+      //   reservas simultáneas mientras no se supere la capacidad
+      //   total (chequeo por suma de huéspedes).
+      final idsUnidad = <String>{};
+      final Map<String, int> cupoSolicitado = {};
+      final Map<String, int> cupoCapacidad = {};
+
+      for (final entry in _alojamientosSeleccionados.entries) {
+        final doc = entry.value['doc'] as DocumentSnapshot;
+        final data = doc.data() as Map<String, dynamic>;
+        final esPorCupo = data['esPorCupo'] == true;
+        if (esPorCupo) {
+          cupoSolicitado[entry.key] = entry.value['huespedes'] as int;
+          cupoCapacidad[entry.key] = (data['capacidad'] as num).toInt();
+        } else {
+          idsUnidad.add(entry.key);
+        }
+      }
+
+      final Map<String, int> cupoYaOcupado = {
+        for (final id in cupoSolicitado.keys) id: 0
+      };
 
       // NOTA: Firestore no permite filtrar por un subcampo dentro de un
       // array de mapas (ej. 'alojamientos.alojamientoId'), así que traemos
@@ -305,8 +369,6 @@ class _ReservationScreenState extends State<ReservationScreen> {
           .collection('reservas')
           .where('estado', whereIn: ['pendiente', 'confirmada', 'activa'])
           .get();
-
-      final idsSeleccionados = _alojamientosSeleccionados.keys.toSet();
 
       for (final doc in query.docs) {
         if (_esEdicion && doc.id == widget.reservationId) continue;
@@ -325,16 +387,44 @@ class _ReservationScreenState extends State<ReservationScreen> {
 
         final alojamientosDeEsaReserva =
             (reserva['alojamientos'] as List?) ?? [];
+
+        // Chequeo de unidades individuales: conflicto binario, igual
+        // que antes.
         final idsOcupadosEnEsaReserva = alojamientosDeEsaReserva
             .map((a) => (a as Map<String, dynamic>)['alojamientoId'])
             .toSet();
-
-        final hayConflicto =
-            idsSeleccionados.any((id) => idsOcupadosEnEsaReserva.contains(id));
-
-        if (hayConflicto) {
+        if (idsUnidad.any((id) => idsOcupadosEnEsaReserva.contains(id))) {
           todosDisponibles = false;
           break;
+        }
+
+        // Chequeo de alojamientos por cupo: sumamos huéspedes ya
+        // comprometidos para esas fechas en cada alojamiento por cupo
+        // que estemos evaluando.
+        for (final a in alojamientosDeEsaReserva) {
+          final map = a as Map<String, dynamic>;
+          final id = map['alojamientoId'];
+          if (cupoSolicitado.containsKey(id)) {
+            cupoYaOcupado[id] = (cupoYaOcupado[id] ?? 0) +
+                ((map['huespedes'] ?? 0) as num).toInt();
+          }
+        }
+      }
+
+      // Validar que ningún alojamiento por cupo se exceda de su
+      // capacidad total al sumar lo ya ocupado más lo solicitado.
+      if (todosDisponibles) {
+        for (final id in cupoSolicitado.keys) {
+          final ocupado = cupoYaOcupado[id] ?? 0;
+          final solicitado = cupoSolicitado[id]!;
+          final capacidad = cupoCapacidad[id] ?? 0;
+          if (ocupado + solicitado > capacidad) {
+            todosDisponibles = false;
+            final disponible = (capacidad - ocupado).clamp(0, capacidad);
+            motivoNoDisponible = 'Cupo insuficiente: quedan $disponible de '
+                '$capacidad espacios disponibles esas fechas.';
+            break;
+          }
         }
       }
 
@@ -355,7 +445,8 @@ class _ReservationScreenState extends State<ReservationScreen> {
         await _cargarActividades();
         await _cargarAlimentos();
       } else {
-        _mostrarError('Uno o más alojamientos no están disponibles');
+        _mostrarError(
+            motivoNoDisponible ?? 'Uno o más alojamientos no están disponibles');
       }
     } catch (e) {
       _mostrarError('Error al verificar disponibilidad: ${e.toString()}');
@@ -364,59 +455,113 @@ class _ReservationScreenState extends State<ReservationScreen> {
     }
   }
 
-  double? _calcularPrecioTotal() {
-    if (_fechaEntrada == null || _fechaSalida == null) return null;
-    final numNoches = _fechaSalida!.difference(_fechaEntrada!).inDays;
-    if (numNoches <= 0) return null;
+  // Subtotal de alojamiento + actividades — la ÚNICA parte sobre la
+  // que puede aplicarse descuento.
+  double _calcularSubtotalAlojamientoActividades() {
+    double subtotal = 0;
 
-    double total = 0;
-
-    _alojamientosSeleccionados.forEach((id, item) {
-      final alojamiento = item['doc'] as DocumentSnapshot;
-      final data = alojamiento.data() as Map<String, dynamic>;
-      final precioPorNoche = (data['precio'] as num).toDouble();
-      final huespedes = item['huespedes'] as int;
-      total += precioPorNoche * huespedes * numNoches;
-    });
+    if (_tipoReserva == 'hospedaje' &&
+        _fechaEntrada != null &&
+        _fechaSalida != null) {
+      final numNoches = _fechaSalida!.difference(_fechaEntrada!).inDays;
+      if (numNoches > 0) {
+        _alojamientosSeleccionados.forEach((id, item) {
+          final alojamiento = item['doc'] as DocumentSnapshot;
+          final data = alojamiento.data() as Map<String, dynamic>;
+          final precioPorNoche = (data['precio'] as num).toDouble();
+          final huespedes = item['huespedes'] as int;
+          subtotal += precioPorNoche * huespedes * numNoches;
+        });
+      }
+    }
 
     if (_deseaActividades) {
       for (var entry in _actividadesSeleccionadas.entries) {
         try {
-          final actividad =
-              _actividadesDisponibles.firstWhere((doc) => doc.id == entry.key);
+          final actividad = _actividadesDisponibles
+              .firstWhere((doc) => doc.id == entry.key);
           final data = actividad.data() as Map<String, dynamic>;
-          total += (data['precio'] as num).toDouble() * entry.value;
+          subtotal += (data['precio'] as num).toDouble() * entry.value;
         } catch (_) {}
       }
     }
 
+    return subtotal;
+  }
+
+  // Subtotal de alimentos — SIEMPRE queda fuera del descuento.
+  double _calcularSubtotalAlimentos() {
+    double subtotal = 0;
     if (_deseaAlimentos) {
       for (var entry in _alimentosSeleccionados.entries) {
         try {
           final alimento =
               _alimentosDisponibles.firstWhere((doc) => doc.id == entry.key);
           final data = alimento.data() as Map<String, dynamic>;
-          total += (data['precio'] as num).toDouble() * entry.value;
+          subtotal += (data['precio'] as num).toDouble() * entry.value;
         } catch (_) {}
       }
     }
+    return subtotal;
+  }
 
-    return total;
+  // Monto de descuento (en pesos) ya resuelto, sea que se haya
+  // ingresado como porcentaje o como valor fijo. Nunca deja el
+  // subtotal de alojamiento+actividades en negativo.
+  double _calcularMontoDescuento() {
+    if (_tipoDescuento == 'ninguno') return 0;
+    final subtotal = _calcularSubtotalAlojamientoActividades();
+    final valorIngresado =
+        double.tryParse(_descuentoController.text.replaceAll(',', '.')) ?? 0;
+    if (valorIngresado <= 0) return 0;
+
+    double monto = 0;
+    if (_tipoDescuento == 'porcentaje') {
+      monto = subtotal * (valorIngresado / 100);
+    } else if (_tipoDescuento == 'fijo') {
+      monto = valorIngresado;
+    }
+    return monto.clamp(0, subtotal);
+  }
+
+  double? _calcularPrecioTotal() {
+    if (_fechaEntrada == null || _fechaSalida == null) return null;
+    if (_tipoReserva == 'hospedaje') {
+      final numNoches = _fechaSalida!.difference(_fechaEntrada!).inDays;
+      if (numNoches <= 0) return null;
+    }
+
+    final subtotalAlojActividades = _calcularSubtotalAlojamientoActividades();
+    final descuento = _calcularMontoDescuento();
+    final subtotalAlimentos = _calcularSubtotalAlimentos();
+
+    return (subtotalAlojActividades - descuento) + subtotalAlimentos;
   }
 
   Future<void> _guardarReserva() async {
     if (!_formKey.currentState!.validate()) return;
     if (_fechaEntrada == null || _fechaSalida == null) {
-      _mostrarError('Seleccione las fechas de entrada y salida');
+      _mostrarError(_tipoReserva == 'pasadia'
+          ? 'Seleccione la fecha y ambas horas de la pasadía'
+          : 'Seleccione las fechas de entrada y salida');
       return;
     }
-    if (_alojamientosSeleccionados.isEmpty) {
-      _mostrarError('Seleccione al menos un alojamiento');
-      return;
-    }
-    if (!_disponibilidadVerificada || !_todosAlojamientosDisponibles) {
-      _mostrarError('Verifique la disponibilidad antes de continuar');
-      return;
+
+    if (_tipoReserva == 'hospedaje') {
+      if (_alojamientosSeleccionados.isEmpty) {
+        _mostrarError('Seleccione al menos un alojamiento');
+        return;
+      }
+      if (!_disponibilidadVerificada || !_todosAlojamientosDisponibles) {
+        _mostrarError('Verifique la disponibilidad antes de continuar');
+        return;
+      }
+    } else {
+      if (!_fechaSalida!.isAfter(_fechaEntrada!)) {
+        _mostrarError(
+            'La hora de salida debe ser posterior a la hora de entrada');
+        return;
+      }
     }
 
     final abono = double.tryParse(_abonoController.text) ?? 0;
@@ -439,6 +584,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
     try {
       final reservaData = {
         'nombre': _nombreController.text.trim(),
+        'tipoReserva': _tipoReserva,
         'email': _emailController.text.trim(),
         'telefono': _telefonoController.text.trim(),
         'huespedesTotales': int.tryParse(_huespedesController.text) ?? 1,
@@ -490,6 +636,8 @@ class _ReservationScreenState extends State<ReservationScreen> {
               }).toList()
             : [],
         'precioTotal': precioTotal,
+        'tipoDescuento': _tipoDescuento,
+        'montoDescuento': _calcularMontoDescuento(),
         'abono': abono,
         'metodoPago': _metodoPagoSeleccionado,
         'saldoPendiente': _saldoPendiente,
@@ -631,6 +779,133 @@ class _ReservationScreenState extends State<ReservationScreen> {
     }
   }
 
+  Future<void> _seleccionarFechaPasadia() async {
+    final fechaSeleccionada = await showDatePicker(
+      context: context,
+      initialDate: _fechaEntrada ?? DateTime.now(),
+      firstDate: _esEdicion ? DateTime(2020) : DateTime.now(),
+      lastDate: DateTime.now().add(Duration(days: 365 * 2)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Colors.green[700]!,
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (fechaSeleccionada != null) {
+      setState(() {
+        _actualizarFechasPasadia(fecha: fechaSeleccionada);
+      });
+    }
+  }
+
+  Future<void> _seleccionarHoraPasadia(bool esEntrada) async {
+    final horaSeleccionada = await showTimePicker(
+      context: context,
+      initialTime: esEntrada
+          ? (_horaEntradaPasadia ?? TimeOfDay(hour: 8, minute: 0))
+          : (_horaSalidaPasadia ?? TimeOfDay(hour: 17, minute: 0)),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(primary: Colors.green[700]!),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (horaSeleccionada != null) {
+      setState(() {
+        if (esEntrada) {
+          _horaEntradaPasadia = horaSeleccionada;
+        } else {
+          _horaSalidaPasadia = horaSeleccionada;
+        }
+        _actualizarFechasPasadia();
+      });
+    }
+  }
+
+  // Combina la fecha de la pasadía con las horas elegidas para armar
+  // _fechaEntrada/_fechaSalida (los mismos campos que usa una reserva
+  // de hospedaje, solo que aquí representan hora de llegada/salida del
+  // mismo día, no noches distintas).
+  void _actualizarFechasPasadia({DateTime? fecha}) {
+    final baseFecha = fecha ?? _fechaEntrada ?? DateTime.now();
+    final soloFecha = DateTime(baseFecha.year, baseFecha.month, baseFecha.day);
+
+    _fechaEntrada = _horaEntradaPasadia != null
+        ? soloFecha.add(Duration(
+            hours: _horaEntradaPasadia!.hour,
+            minutes: _horaEntradaPasadia!.minute))
+        : soloFecha;
+
+    _fechaSalida = _horaSalidaPasadia != null
+        ? soloFecha.add(Duration(
+            hours: _horaSalidaPasadia!.hour,
+            minutes: _horaSalidaPasadia!.minute))
+        : null;
+
+    // Un pasadía no requiere alojamiento ni verificación de
+    // disponibilidad — en cuanto hay fecha y ambas horas, se habilitan
+    // directamente actividades y alimentos.
+    final horasCompletas =
+        _horaEntradaPasadia != null && _horaSalidaPasadia != null;
+    _mostrarActividades = horasCompletas;
+    _mostrarAlimentos = horasCompletas;
+    _disponibilidadVerificada = false;
+    _precioTotal = _calcularPrecioTotal();
+    _calcularSaldoPendiente();
+  }
+
+  Widget _buildCategoriaChip({
+    required String label,
+    required String subtitle,
+    required IconData icon,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(vertical: 14, horizontal: 10),
+        decoration: BoxDecoration(
+          color: selected ? Colors.green[50] : null,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? Colors.green : Colors.grey[300]!,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon,
+                color: selected ? Colors.green[700] : Colors.grey[600],
+                size: 28),
+            SizedBox(height: 6),
+            Text(label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                    color: selected ? Colors.green[800] : Colors.black87)),
+            SizedBox(height: 2),
+            Text(subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          ],
+        ),
+      ),
+    );
+  }
+
   List<DocumentSnapshot> _filtrarAlojamientos() {
     if (_tipoAlojamientoSeleccionado == null) return [];
     return _listaAlojamientosDisponibles.where((alojamiento) {
@@ -766,6 +1041,141 @@ class _ReservationScreenState extends State<ReservationScreen> {
     );
   }
 
+  static const List<String> _ordenTiposAlimento = [
+    "Desayuno", "Almuerzo", "Cena", "Bebida", "Snack", "Postre", "Especial",
+  ];
+
+  IconData _iconoTipoAlimento(String? tipo) {
+    switch (tipo) {
+      case 'Desayuno':
+        return Icons.free_breakfast;
+      case 'Almuerzo':
+        return Icons.lunch_dining;
+      case 'Cena':
+        return Icons.dinner_dining;
+      case 'Bebida':
+        return Icons.local_bar;
+      case 'Snack':
+        return Icons.cookie;
+      case 'Postre':
+        return Icons.icecream;
+      case 'Especial':
+        return Icons.star;
+      default:
+        return Icons.restaurant_menu;
+    }
+  }
+
+  // Agrupa los alimentos disponibles por tipo (mismo orden del
+  // catálogo), con un encabezado por grupo, para que el recepcionista
+  // encuentre rápido lo que busca en vez de desplazarse por una lista
+  // plana larga.
+  List<Widget> _buildAlimentosAgrupados() {
+    final Map<String, List<DocumentSnapshot>> grupos = {};
+    for (final doc in _alimentosDisponibles) {
+      final data = doc.data() as Map<String, dynamic>;
+      final tipo = data['tipo']?.toString() ?? 'Otros';
+      grupos.putIfAbsent(tipo, () => []).add(doc);
+    }
+
+    final tiposOrdenados = [
+      ..._ordenTiposAlimento.where(grupos.containsKey),
+      ...grupos.keys.where((t) => !_ordenTiposAlimento.contains(t)),
+    ];
+
+    final widgets = <Widget>[];
+    for (final tipo in tiposOrdenados) {
+      widgets.add(Padding(
+        padding: EdgeInsets.only(top: 12, bottom: 6),
+        child: Row(
+          children: [
+            Icon(_iconoTipoAlimento(tipo), size: 20, color: Colors.green[700]),
+            SizedBox(width: 8),
+            Text(tipo,
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: Colors.green[700])),
+          ],
+        ),
+      ));
+      for (final alimento in grupos[tipo]!) {
+        widgets.add(_buildAlimentoCard(alimento));
+      }
+    }
+    return widgets;
+  }
+
+  Widget _buildAlimentoCard(DocumentSnapshot alimento) {
+    final data = alimento.data() as Map<String, dynamic>;
+    final isSelected = _alimentosSeleccionados.containsKey(alimento.id);
+    final cantidad = isSelected ? _alimentosSeleccionados[alimento.id]! : 1;
+
+    return Card(
+      margin: EdgeInsets.only(bottom: 10),
+      color: isSelected ? Colors.green[50] : null,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: isSelected ? Colors.green : Colors.grey[300]!,
+        ),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => setState(() {
+          if (isSelected) {
+            _alimentosSeleccionados.remove(alimento.id);
+          } else {
+            _alimentosSeleccionados[alimento.id] = 1;
+          }
+          _precioTotal = _calcularPrecioTotal();
+          _calcularSaldoPendiente();
+        }),
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(_iconoTipoAlimento(data['tipo']),
+                  color: Colors.green[700], size: 28),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text(data['nombre'],
+                            style: TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold)),
+                      ),
+                      if (isSelected)
+                        Icon(Icons.check_circle, color: Colors.green),
+                    ]),
+                    Text(
+                      'Precio: \$${data['precio']} por servicio',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green[700]),
+                    ),
+                    if (isSelected)
+                      _buildAlimentoCounter(alimento.id, cantidad),
+                    if (data['descripcion'] != null)
+                      Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: Text(data['descripcion']),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final alojamientosFiltrados = _filtrarAlojamientos();
@@ -847,6 +1257,60 @@ class _ReservationScreenState extends State<ReservationScreen> {
                     ]),
                     SizedBox(height: 20),
 
+                    // Sección: Tipo de Reserva
+                    _buildCard('Tipo de Reserva', [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildCategoriaChip(
+                              label: 'Hospedaje',
+                              subtitle: 'Con alojamiento',
+                              icon: Icons.hotel,
+                              selected: _tipoReserva == 'hospedaje',
+                              onTap: () => setState(() {
+                                _tipoReserva = 'hospedaje';
+                                _categoriaAlojamiento = null;
+                                _tipoAlojamientoSeleccionado = null;
+                                _alojamientosSeleccionados.clear();
+                                _horaEntradaPasadia = null;
+                                _horaSalidaPasadia = null;
+                                _fechaEntrada = null;
+                                _fechaSalida = null;
+                                _disponibilidadVerificada = false;
+                                _mostrarActividades = false;
+                                _mostrarAlimentos = false;
+                                _precioTotal = _calcularPrecioTotal();
+                                _calcularSaldoPendiente();
+                              }),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: _buildCategoriaChip(
+                              label: 'Pasadía',
+                              subtitle: 'Solo por el día',
+                              icon: Icons.wb_sunny,
+                              selected: _tipoReserva == 'pasadia',
+                              onTap: () => setState(() {
+                                _tipoReserva = 'pasadia';
+                                _categoriaAlojamiento = null;
+                                _tipoAlojamientoSeleccionado = null;
+                                _alojamientosSeleccionados.clear();
+                                _fechaEntrada = null;
+                                _fechaSalida = null;
+                                _disponibilidadVerificada = false;
+                                _mostrarActividades = false;
+                                _mostrarAlimentos = false;
+                                _precioTotal = _calcularPrecioTotal();
+                                _calcularSaldoPendiente();
+                              }),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ]),
+                    SizedBox(height: 20),
+
                     // Sección 2: Detalles de la Reserva
                     _buildCard('Detalles de la Reserva', [
                       TextFormField(
@@ -859,56 +1323,175 @@ class _ReservationScreenState extends State<ReservationScreen> {
                         keyboardType: TextInputType.number,
                       ),
                       SizedBox(height: 16),
-                      ListTile(
-                        leading: Icon(Icons.calendar_today,
-                            color: Colors.green[700]),
-                        title: Text('Fecha de Entrada'),
-                        subtitle: Text(_fechaEntrada == null
-                            ? 'Seleccionar fecha'
-                            : DateFormat('dd/MM/yyyy').format(_fechaEntrada!)),
-                        trailing: Icon(Icons.arrow_forward_ios),
-                        onTap: () => _seleccionarFecha(true),
-                      ),
-                      Divider(),
-                      ListTile(
-                        leading: Icon(Icons.calendar_today,
-                            color: Colors.green[700]),
-                        title: Text('Fecha de Salida'),
-                        subtitle: Text(_fechaSalida == null
-                            ? 'Seleccionar fecha'
-                            : DateFormat('dd/MM/yyyy').format(_fechaSalida!)),
-                        trailing: Icon(Icons.arrow_forward_ios),
-                        onTap: () => _seleccionarFecha(false),
-                      ),
+                      if (_tipoReserva == 'hospedaje') ...[
+                        ListTile(
+                          leading: Icon(Icons.calendar_today,
+                              color: Colors.green[700]),
+                          title: Text('Fecha de Entrada'),
+                          subtitle: Text(_fechaEntrada == null
+                              ? 'Seleccionar fecha'
+                              : DateFormat('dd/MM/yyyy').format(_fechaEntrada!)),
+                          trailing: Icon(Icons.arrow_forward_ios),
+                          onTap: () => _seleccionarFecha(true),
+                        ),
+                        Divider(),
+                        ListTile(
+                          leading: Icon(Icons.calendar_today,
+                              color: Colors.green[700]),
+                          title: Text('Fecha de Salida'),
+                          subtitle: Text(_fechaSalida == null
+                              ? 'Seleccionar fecha'
+                              : DateFormat('dd/MM/yyyy').format(_fechaSalida!)),
+                          trailing: Icon(Icons.arrow_forward_ios),
+                          onTap: () => _seleccionarFecha(false),
+                        ),
+                      ] else ...[
+                        ListTile(
+                          leading: Icon(Icons.calendar_today,
+                              color: Colors.green[700]),
+                          title: Text('Fecha de la Pasadía'),
+                          subtitle: Text(_fechaEntrada == null
+                              ? 'Seleccionar fecha'
+                              : DateFormat('dd/MM/yyyy').format(_fechaEntrada!)),
+                          trailing: Icon(Icons.arrow_forward_ios),
+                          onTap: _seleccionarFechaPasadia,
+                        ),
+                        Divider(),
+                        ListTile(
+                          leading: Icon(Icons.access_time,
+                              color: Colors.green[700]),
+                          title: Text('Hora de Entrada'),
+                          subtitle: Text(_horaEntradaPasadia == null
+                              ? 'Seleccionar hora'
+                              : _horaEntradaPasadia!.format(context)),
+                          trailing: Icon(Icons.arrow_forward_ios),
+                          onTap: () => _seleccionarHoraPasadia(true),
+                        ),
+                        Divider(),
+                        ListTile(
+                          leading: Icon(Icons.access_time,
+                              color: Colors.green[700]),
+                          title: Text('Hora de Salida'),
+                          subtitle: Text(_horaSalidaPasadia == null
+                              ? 'Seleccionar hora'
+                              : _horaSalidaPasadia!.format(context)),
+                          trailing: Icon(Icons.arrow_forward_ios),
+                          onTap: () => _seleccionarHoraPasadia(false),
+                        ),
+                      ],
                     ]),
                     SizedBox(height: 20),
 
-                    // Sección 3: Tipo de Alojamiento
+                    // Sección 3: Categoría y Tipo de Alojamiento
                     _buildCard('Tipo de Alojamiento', [
-                      DropdownButtonFormField<String>(
-                        value: _tipoAlojamientoSeleccionado,
-                        decoration: InputDecoration(
-                          border: OutlineInputBorder(),
-                          labelText: 'Seleccione un tipo',
-                        ),
-                        items: _tiposAlojamiento
-                            .map((tipo) => DropdownMenuItem<String>(
-                                  value: tipo,
-                                  child: Text(tipo),
-                                ))
-                            .toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            _tipoAlojamientoSeleccionado = value;
-                            _alojamientosSeleccionados.clear();
-                            _disponibilidadVerificada = false;
-                            _precioTotal = _calcularPrecioTotal();
-                            _calcularSaldoPendiente();
-                          });
-                        },
-                        validator: (value) =>
-                            value == null ? 'Seleccione un tipo' : null,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildCategoriaChip(
+                              label: 'Alojamiento rural',
+                              subtitle: 'Habitación, cabaña, apto',
+                              icon: Icons.house,
+                              selected: _categoriaAlojamiento == 'rural',
+                              onTap: () => setState(() {
+                                _categoriaAlojamiento = 'rural';
+                                _tipoAlojamientoSeleccionado = null;
+                                _alojamientosSeleccionados.clear();
+                                _disponibilidadVerificada = false;
+                                _precioTotal = _calcularPrecioTotal();
+                                _calcularSaldoPendiente();
+                              }),
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Expanded(
+                            child: _buildCategoriaChip(
+                              label: 'Zona de camping',
+                              subtitle: 'Con o sin equipo',
+                              icon: Icons.forest,
+                              selected: _categoriaAlojamiento == 'camping',
+                              onTap: () => setState(() {
+                                _categoriaAlojamiento = 'camping';
+                                _tipoAlojamientoSeleccionado = null;
+                                _alojamientosSeleccionados.clear();
+                                _disponibilidadVerificada = false;
+                                _precioTotal = _calcularPrecioTotal();
+                                _calcularSaldoPendiente();
+                              }),
+                            ),
+                          ),
+                        ],
                       ),
+                      if (_categoriaAlojamiento == 'rural') ...[
+                        SizedBox(height: 16),
+                        DropdownButtonFormField<String>(
+                          value: _tipoAlojamientoSeleccionado,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(),
+                            labelText: 'Seleccione un tipo',
+                          ),
+                          items: _tiposRural
+                              .map((tipo) => DropdownMenuItem<String>(
+                                    value: tipo,
+                                    child: Text(tipo),
+                                  ))
+                              .toList(),
+                          onChanged: (value) {
+                            setState(() {
+                              _tipoAlojamientoSeleccionado = value;
+                              _alojamientosSeleccionados.clear();
+                              _disponibilidadVerificada = false;
+                              _precioTotal = _calcularPrecioTotal();
+                              _calcularSaldoPendiente();
+                            });
+                          },
+                          validator: (value) =>
+                              _categoriaAlojamiento == 'rural' && value == null
+                                  ? 'Seleccione un tipo'
+                                  : null,
+                        ),
+                      ],
+                      if (_categoriaAlojamiento == 'camping') ...[
+                        SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildCategoriaChip(
+                                label: 'Con equipo',
+                                subtitle: 'Carpa incluida',
+                                icon: Icons.cabin,
+                                selected: _tipoAlojamientoSeleccionado ==
+                                    _tipoCampingConEquipo,
+                                onTap: () => setState(() {
+                                  _tipoAlojamientoSeleccionado =
+                                      _tipoCampingConEquipo;
+                                  _alojamientosSeleccionados.clear();
+                                  _disponibilidadVerificada = false;
+                                  _precioTotal = _calcularPrecioTotal();
+                                  _calcularSaldoPendiente();
+                                }),
+                              ),
+                            ),
+                            SizedBox(width: 12),
+                            Expanded(
+                              child: _buildCategoriaChip(
+                                label: 'Sin equipo',
+                                subtitle: 'Trae su carpa',
+                                icon: Icons.backpack,
+                                selected: _tipoAlojamientoSeleccionado ==
+                                    _tipoCampingSinEquipo,
+                                onTap: () => setState(() {
+                                  _tipoAlojamientoSeleccionado =
+                                      _tipoCampingSinEquipo;
+                                  _alojamientosSeleccionados.clear();
+                                  _disponibilidadVerificada = false;
+                                  _precioTotal = _calcularPrecioTotal();
+                                  _calcularSaldoPendiente();
+                                }),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ]),
                     SizedBox(height: 20),
 
@@ -1187,6 +1770,96 @@ class _ReservationScreenState extends State<ReservationScreen> {
                       ]),
                     ],
 
+                    // Descuento (opcional) — solo sobre alojamiento y
+                    // actividades, nunca sobre alimentos.
+                    if (_mostrarActividades || _mostrarAlimentos) ...[
+                      SizedBox(height: 20),
+                      _buildCard('Descuento (opcional)', [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _buildCategoriaChip(
+                                label: 'Sin descuento',
+                                subtitle: 'Precio normal',
+                                icon: Icons.block,
+                                selected: _tipoDescuento == 'ninguno',
+                                onTap: () => setState(() {
+                                  _tipoDescuento = 'ninguno';
+                                  _descuentoController.clear();
+                                  _precioTotal = _calcularPrecioTotal();
+                                  _calcularSaldoPendiente();
+                                }),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: _buildCategoriaChip(
+                                label: 'Porcentaje',
+                                subtitle: 'Ej. 15%',
+                                icon: Icons.percent,
+                                selected: _tipoDescuento == 'porcentaje',
+                                onTap: () => setState(() {
+                                  _tipoDescuento = 'porcentaje';
+                                  _precioTotal = _calcularPrecioTotal();
+                                  _calcularSaldoPendiente();
+                                }),
+                              ),
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: _buildCategoriaChip(
+                                label: 'Valor fijo',
+                                subtitle: 'Ej. \$20.000',
+                                icon: Icons.attach_money,
+                                selected: _tipoDescuento == 'fijo',
+                                onTap: () => setState(() {
+                                  _tipoDescuento = 'fijo';
+                                  _precioTotal = _calcularPrecioTotal();
+                                  _calcularSaldoPendiente();
+                                }),
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (_tipoDescuento != 'ninguno') ...[
+                          SizedBox(height: 16),
+                          TextFormField(
+                            controller: _descuentoController,
+                            decoration: InputDecoration(
+                              labelText: _tipoDescuento == 'porcentaje'
+                                  ? 'Porcentaje de descuento'
+                                  : 'Valor del descuento',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(_tipoDescuento == 'porcentaje'
+                                  ? Icons.percent
+                                  : Icons.attach_money),
+                              helperText:
+                                  'Se aplica solo sobre alojamiento y '
+                                  'actividades. Los alimentos no llevan '
+                                  'descuento.',
+                            ),
+                            keyboardType:
+                                TextInputType.numberWithOptions(decimal: true),
+                            onChanged: (_) => setState(() {
+                              _precioTotal = _calcularPrecioTotal();
+                              _calcularSaldoPendiente();
+                            }),
+                          ),
+                          if (_calcularMontoDescuento() > 0)
+                            Padding(
+                              padding: EdgeInsets.only(top: 8),
+                              child: Text(
+                                'Descuento aplicado: -\$${_calcularMontoDescuento().toStringAsFixed(2)}',
+                                style: TextStyle(
+                                    color: Colors.green[700],
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                        ],
+                      ]),
+                    ],
+
+                    // Sección 7: Pago
                     // Sección 6: Alimentos
                     if (_mostrarAlimentos) ...[
                       SizedBox(height: 20),
@@ -1214,86 +1887,7 @@ class _ReservationScreenState extends State<ReservationScreen> {
                           else if (_alimentosDisponibles.isEmpty)
                             Text('No hay opciones disponibles')
                           else
-                            ..._alimentosDisponibles.map((alimento) {
-                              final data =
-                                  alimento.data() as Map<String, dynamic>;
-                              final isSelected = _alimentosSeleccionados
-                                  .containsKey(alimento.id);
-                              final cantidad = isSelected
-                                  ? _alimentosSeleccionados[alimento.id]!
-                                  : 1;
-
-                              return Card(
-                                margin: EdgeInsets.only(bottom: 10),
-                                color: isSelected ? Colors.green[50] : null,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  side: BorderSide(
-                                    color: isSelected
-                                        ? Colors.green
-                                        : Colors.grey[300]!,
-                                  ),
-                                ),
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(12),
-                                  onTap: () => setState(() {
-                                    if (isSelected) {
-                                      _alimentosSeleccionados
-                                          .remove(alimento.id);
-                                    } else {
-                                      _alimentosSeleccionados[alimento.id] =
-                                          1;
-                                    }
-                                    _precioTotal = _calcularPrecioTotal();
-                                    _calcularSaldoPendiente();
-                                  }),
-                                  child: Padding(
-                                    padding: EdgeInsets.all(16),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(children: [
-                                          Expanded(
-                                            child: Text(data['nombre'],
-                                                style: TextStyle(
-                                                    fontSize: 18,
-                                                    fontWeight:
-                                                        FontWeight.bold)),
-                                          ),
-                                          if (isSelected)
-                                            Icon(Icons.check_circle,
-                                                color: Colors.green),
-                                        ]),
-                                        Text(
-                                          'Precio: \$${data['precio']} por servicio',
-                                          style: TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.green[700]),
-                                        ),
-                                        if (isSelected)
-                                          _buildAlimentoCounter(
-                                              alimento.id, cantidad),
-                                        if (data['descripcion'] != null)
-                                          Padding(
-                                            padding: EdgeInsets.only(top: 8),
-                                            child: Text(data['descripcion']),
-                                          ),
-                                        if (data['tipo'] != null)
-                                          Padding(
-                                            padding: EdgeInsets.only(top: 4),
-                                            child: Chip(
-                                              label: Text(data['tipo']),
-                                              backgroundColor: Colors.blue[50],
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            }),
+                            ..._buildAlimentosAgrupados(),
                         ],
                       ]),
                     ],

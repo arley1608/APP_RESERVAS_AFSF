@@ -84,6 +84,7 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
         await _service.updateActividad(editingId!, data);
         _showSuccessDialog("Actividad actualizada correctamente");
       }
+      if (mounted) Navigator.of(context).pop();
       _resetForm();
     } catch (e) {
       _showErrorDialog("No se pudo guardar la actividad: ${e.toString()}");
@@ -123,20 +124,126 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
   }
 
   void _loadActividadForEdit(Map<String, dynamic> data, String id) {
-    setState(() {
-      editingId = id;
-      nombreController.text = data['nombre'];
-      precioController.text = data['precio'].toString();
-      descripcionController.text = data['descripcion'];
-    });
+    editingId = id;
+    nombreController.text = data['nombre'];
+    precioController.text = data['precio'].toString();
+    descripcionController.text = data['descripcion'];
   }
 
   void _resetForm() {
-    setState(() {
-      nombreController.clear();
-      precioController.clear();
-      descripcionController.clear();
-      editingId = null;
+    nombreController.clear();
+    precioController.clear();
+    descripcionController.clear();
+    editingId = null;
+  }
+
+  void _abrirFormulario({Map<String, dynamic>? data, String? id}) {
+    if (data != null && id != null) {
+      _loadActividadForEdit(data, id);
+    } else {
+      _resetForm();
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+          ),
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.75,
+            minChildSize: 0.5,
+            maxChildSize: 0.95,
+            expand: false,
+            builder: (context, scrollController) {
+              return StatefulBuilder(
+                builder: (context, setModalState) {
+                  return SingleChildScrollView(
+                    controller: scrollController,
+                    padding: EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 40,
+                            height: 4,
+                            margin: EdgeInsets.only(bottom: 16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[300],
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        ),
+                        Text(
+                          editingId == null
+                              ? "Nueva Actividad"
+                              : "Editar Actividad",
+                          style: TextStyle(
+                              fontSize: 22, fontWeight: FontWeight.bold),
+                        ),
+                        SizedBox(height: 20),
+                        TextField(
+                          controller: nombreController,
+                          decoration: InputDecoration(
+                            labelText: "Nombre",
+                            labelStyle: TextStyle(fontSize: 18),
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.emoji_events),
+                          ),
+                        ),
+                        SizedBox(height: 16),
+                        TextField(
+                          controller: precioController,
+                          decoration: InputDecoration(
+                            labelText: "Precio",
+                            labelStyle: TextStyle(fontSize: 18),
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.attach_money),
+                          ),
+                          keyboardType:
+                              TextInputType.numberWithOptions(decimal: true),
+                        ),
+                        SizedBox(height: 16),
+                        TextField(
+                          controller: descripcionController,
+                          decoration: InputDecoration(
+                            labelText: "Descripción",
+                            labelStyle: TextStyle(fontSize: 18),
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.description),
+                          ),
+                          maxLines: 3,
+                        ),
+                        SizedBox(height: 24),
+                        ElevatedButton(
+                          onPressed: guardarActividad,
+                          style: ElevatedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: Text(
+                            editingId == null
+                                ? "Guardar Actividad"
+                                : "Actualizar Actividad",
+                            style: TextStyle(fontSize: 18),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        );
+      },
+    ).whenComplete(() {
+      if (mounted) setState(_resetForm);
     });
   }
 
@@ -145,114 +252,68 @@ class _ActivityManagementScreenState extends State<ActivityManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text("Gestión de Actividades",
-            style: TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: 24, color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.green[700],
         leading: IconButton(
-          icon: Icon(Icons.arrow_back_ios_new, size: 35, color: Colors.white),
+          icon: Icon(Icons.arrow_back_ios_new, size: 30, color: Colors.white),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                TextField(
-                  controller: nombreController,
-                  decoration: InputDecoration(
-                    labelText: "Nombre",
-                    labelStyle: TextStyle(fontSize: 20),
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.emoji_events),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _abrirFormulario(),
+        backgroundColor: Colors.green[700],
+        icon: Icon(Icons.add, color: Colors.white),
+        label: Text("Nueva", style: TextStyle(color: Colors.white)),
+      ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: _service.getActividades(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("Error al cargar los datos"));
+          }
+          final activities = snapshot.data?.docs ?? [];
+          if (activities.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                  "No hay actividades registradas.\nToca \"Nueva\" para agregar la primera.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                ),
+              ),
+            );
+          }
+          return ListView.builder(
+            padding: EdgeInsets.only(bottom: 90),
+            itemCount: activities.length,
+            itemBuilder: (context, index) {
+              final doc = activities[index];
+              final data = doc.data() as Map<String, dynamic>;
+              return Card(
+                margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                child: ListTile(
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  leading:
+                      Icon(Icons.sports_soccer, size: 36, color: Colors.green),
+                  title: Text(data['nombre'],
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                  subtitle: Text("\$${data['precio']}",
+                      style: TextStyle(fontSize: 14)),
+                  onTap: () => _abrirFormulario(data: data, id: doc.id),
+                  trailing: IconButton(
+                    icon: Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () => eliminarActividad(doc.id),
                   ),
                 ),
-                SizedBox(height: 16),
-                TextField(
-                  controller: precioController,
-                  decoration: InputDecoration(
-                    labelText: "Precio",
-                    labelStyle: TextStyle(fontSize: 20),
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.attach_money),
-                  ),
-                  keyboardType: TextInputType.numberWithOptions(decimal: true),
-                ),
-                SizedBox(height: 16),
-                TextField(
-                  controller: descripcionController,
-                  decoration: InputDecoration(
-                    labelText: "Descripción",
-                    labelStyle: TextStyle(fontSize: 20),
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.description),
-                  ),
-                  maxLines: 3,
-                ),
-                SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: guardarActividad,
-                  style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    minimumSize: Size(double.infinity, 50),
-                  ),
-                  child: Text(
-                    editingId == null ? "Guardar Actividad" : "Actualizar Actividad",
-                    style: TextStyle(fontSize: 18),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _service.getActividades(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Center(child: Text("Error al cargar los datos"));
-                }
-                final activities = snapshot.data?.docs ?? [];
-                if (activities.isEmpty) {
-                  return Center(child: Text("No hay actividades registradas"));
-                }
-                return ListView.builder(
-                  itemCount: activities.length,
-                  itemBuilder: (context, index) {
-                    final doc = activities[index];
-                    final data = doc.data() as Map<String, dynamic>;
-                    return Card(
-                      margin: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      child: ListTile(
-                        leading: Icon(Icons.sports_soccer, size: 40, color: Colors.green),
-                        title: Text(data['nombre'],
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                        subtitle: Text(
-                            "Precio: \$${data['precio']}\n${data['descripcion']}",
-                            style: TextStyle(fontSize: 16)),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: Icon(Icons.edit, color: Colors.blue),
-                              onPressed: () => _loadActividadForEdit(data, doc.id),
-                            ),
-                            IconButton(
-                              icon: Icon(Icons.delete, color: Colors.red),
-                              onPressed: () => eliminarActividad(doc.id),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+              );
+            },
+          );
+        },
       ),
     );
   }
